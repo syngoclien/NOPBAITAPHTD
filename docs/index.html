@@ -3,9 +3,835 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>NOPBAITAPHTD</title>
+  <title>Cổng Nộp Bài HTD</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
-<body>
-  <h1>NOPBAITAPHTD đã tạo thành công</h1>
+
+<body class="bg-gray-100">
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useMemo } from "https://esm.sh/react@18.2.0";
+    import { createRoot } from "https://esm.sh/react-dom@18.2.0/client";
+
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import {
+      getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
+      onSnapshot, query, orderBy, serverTimestamp, Timestamp
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import {
+      getAuth, signInAnonymously, onAuthStateChanged
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+    import {
+      User, Shield, Plus, Trash2, FileSpreadsheet,
+      ExternalLink, Edit2, CheckCircle
+    } from "https://esm.sh/lucide-react@0.344.0";
+
+    const firebaseConfig = {
+      apiKey: "THAY_API_KEY_MOI",
+      authDomain: "THAY_AUTH_DOMAIN_MOI",
+      projectId: "THAY_PROJECT_ID_MOI",
+      storageBucket: "THAY_STORAGE_BUCKET_MOI",
+      messagingSenderId: "THAY_MESSAGING_SENDER_ID_MOI",
+      appId: "THAY_APP_ID_MOI"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+
+    const ADMIN_PASSWORD = "admin123";
+
+    function App() {
+      const getCourseFromURL = () => {
+        const params = new URLSearchParams(window.location.search);
+        return params.get("course");
+      };
+
+      const [courseId, setCourseId] = useState(() => {
+        return getCourseFromURL() || localStorage.getItem("COURSE_ID") || "khoa-mac-dinh";
+      });
+      const [courseInput, setCourseInput] = useState(() => {
+        return getCourseFromURL() || localStorage.getItem("COURSE_ID") || "khoa-mac-dinh";
+      });
+
+      const [user, setUser] = useState(null);
+      const [view, setView] = useState("home");
+
+      const [students, setStudents] = useState([]);
+      const [assignments, setAssignments] = useState([]);
+      const [submissions, setSubmissions] = useState([]);
+
+      const [adminPassInput, setAdminPassInput] = useState("");
+      const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+      const [newStudentName, setNewStudentName] = useState("");
+      const [newAssignName, setNewAssignName] = useState("");
+      const [newAssignDeadlineDate, setNewAssignDeadlineDate] = useState("");
+      const [missingAssignId, setMissingAssignId] = useState("");
+
+      const [selectedStudentId, setSelectedStudentId] = useState("");
+      const [selectedAssignId, setSelectedAssignId] = useState("");
+      const [linkInput, setLinkInput] = useState("");
+      const [editingSubId, setEditingSubId] = useState(null);
+
+      const [adminTab, setAdminTab] = useState("report");
+
+      const applyCourseId = (nextId) => {
+        const clean = String(nextId || "").trim();
+        if (!clean) {
+          alert("Mã khóa không được để trống.");
+          return;
+        }
+
+        localStorage.setItem("COURSE_ID", clean);
+        setCourseId(clean);
+        setCourseInput(clean);
+
+        setSelectedStudentId("");
+        setSelectedAssignId("");
+        setLinkInput("");
+        setEditingSubId(null);
+      };
+
+      const colStudents = () => collection(db, "courses", courseId, "students");
+      const colAssignments = () => collection(db, "courses", courseId, "assignments");
+      const colSubmissions = () => collection(db, "courses", courseId, "submissions");
+
+      useEffect(() => {
+        signInAnonymously(auth).catch(console.error);
+        const unsub = onAuthStateChanged(auth, setUser);
+        return () => unsub();
+      }, []);
+
+      useEffect(() => {
+        if (!user) return;
+
+        const unsubStudents = onSnapshot(
+          query(colStudents(), orderBy("name")),
+          (snap) => setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+          (err) => console.error(err)
+        );
+
+        const unsubAssignments = onSnapshot(
+          query(colAssignments(), orderBy("createdAt")),
+          (snap) => setAssignments(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+          (err) => console.error(err)
+        );
+
+        const unsubSubmissions = onSnapshot(
+          query(colSubmissions(), orderBy("timestamp", "desc")),
+          (snap) => setSubmissions(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+          (err) => console.error(err)
+        );
+
+        return () => {
+          unsubStudents();
+          unsubAssignments();
+          unsubSubmissions();
+        };
+      }, [user, courseId]);
+
+      const toMillis = (ts) => (ts?.seconds ? ts.seconds * 1000 : null);
+
+      const getStudentName = (id) => students.find(s => s.id === id)?.name || "Unknown";
+      const getAssignName = (id) => assignments.find(a => a.id === id)?.title || "Unknown";
+
+      const getDeadlineMillis = (assignmentId) => {
+        const a = assignments.find(x => x.id === assignmentId);
+        return toMillis(a?.deadlineAt);
+      };
+
+      const isLateSubmission = (sub) => {
+        const dl = getDeadlineMillis(sub.assignmentId);
+        const sm = toMillis(sub?.timestamp);
+        if (!dl || !sm) return false;
+        return sm > dl;
+      };
+
+      const isOverdueMissing = (studentId, assignmentId) => {
+        const dl = getDeadlineMillis(assignmentId);
+        if (!dl) return false;
+        if (Date.now() <= dl) return false;
+        const has = submissions.some(s => s.studentId === studentId && s.assignmentId === assignmentId);
+        return !has;
+      };
+
+      const mySubmissions = useMemo(() => {
+        if (!selectedStudentId) return [];
+        return submissions.filter(s => s.studentId === selectedStudentId);
+      }, [submissions, selectedStudentId]);
+
+      const totalRequired = students.length * assignments.length;
+
+      const submittedPairs = useMemo(() => {
+        const set = new Set();
+        for (const s of submissions) {
+          if (s.studentId && s.assignmentId) set.add(`${s.studentId}__${s.assignmentId}`);
+        }
+        return set;
+      }, [submissions]);
+
+      const totalSubmitted = submittedPairs.size;
+      const overallPercent = totalRequired === 0 ? 0 : Math.round((totalSubmitted / totalRequired) * 100);
+
+      const missingStudentsForSelectedAssignment = useMemo(() => {
+        if (!missingAssignId) return [];
+        return students.filter(stu =>
+          !submissions.some(s => s.studentId === stu.id && s.assignmentId === missingAssignId)
+        );
+      }, [students, submissions, missingAssignId]);
+
+      const handleAdminLogin = (e) => {
+        e.preventDefault();
+        if (adminPassInput === ADMIN_PASSWORD) {
+          setIsAdminAuthenticated(true);
+          setView("admin-dashboard");
+          setAdminPassInput("");
+        } else {
+          alert("Sai mật khẩu!");
+        }
+      };
+
+      const addStudent = async () => {
+        if (!newStudentName.trim()) return;
+        try {
+          await addDoc(colStudents(), {
+            name: newStudentName.trim(),
+            createdAt: serverTimestamp()
+          });
+          setNewStudentName("");
+        } catch (e) {
+          console.error(e);
+          alert("Lỗi thêm học viên");
+        }
+      };
+
+      const deleteStudent = async (id) => {
+        if (!confirm("Xóa học viên này?")) return;
+        try {
+          await deleteDoc(doc(db, "courses", courseId, "students", id));
+        } catch (e) {
+          console.error(e);
+          alert("Lỗi xóa học viên");
+        }
+      };
+
+      const addAssignment = async () => {
+        if (!newAssignName.trim()) return;
+
+        try {
+          let deadlineAt = null;
+          if (newAssignDeadlineDate) {
+            const endOfDay = new Date(`${newAssignDeadlineDate}T23:59:59`);
+            if (!isNaN(endOfDay.getTime())) {
+              deadlineAt = Timestamp.fromDate(endOfDay);
+            }
+          }
+
+          await addDoc(colAssignments(), {
+            title: newAssignName.trim(),
+            createdAt: serverTimestamp(),
+            deadlineAt
+          });
+
+          setNewAssignName("");
+          setNewAssignDeadlineDate("");
+        } catch (e) {
+          console.error(e);
+          alert("Lỗi thêm bài tập");
+        }
+      };
+
+      const deleteAssignment = async (id) => {
+        if (!confirm("Xóa bài tập này?")) return;
+        try {
+          await deleteDoc(doc(db, "courses", courseId, "assignments", id));
+        } catch (e) {
+          console.error(e);
+          alert("Lỗi xóa bài tập");
+        }
+      };
+
+      const exportToCSV = () => {
+        const headers = ["Họ và Tên", ...assignments.map(a => a.title)];
+
+        const rows = students.map(stu => {
+          const rowData = [stu.name];
+          assignments.forEach(assign => {
+            const sub = submissions.find(s => s.studentId === stu.id && s.assignmentId === assign.id);
+            rowData.push(sub ? sub.link : "");
+          });
+          return rowData.map(cell => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(",");
+        });
+
+        const csvContent = "\uFEFF" + headers.map(h => `"${h.replaceAll('"', '""')}"`).join(",") + "\n" + rows.join("\n");
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `Bao_cao_nop_bai_${new Date().toISOString().slice(0,10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      };
+
+      const handleSubmitWork = async (e) => {
+        e.preventDefault();
+
+        if (!selectedStudentId || !selectedAssignId || !linkInput) {
+          alert("Vui lòng chọn đầy đủ thông tin và dán link!");
+          return;
+        }
+
+        const existingSub = submissions.find(s =>
+          s.studentId === selectedStudentId && s.assignmentId === selectedAssignId
+        );
+
+        try {
+          if (editingSubId) {
+            await updateDoc(doc(db, "courses", courseId, "submissions", editingSubId), {
+              link: linkInput,
+              timestamp: serverTimestamp()
+            });
+            setEditingSubId(null);
+            alert("Cập nhật bài nộp thành công!");
+          } else if (existingSub) {
+            if (confirm("Bạn đã nộp bài này rồi. Cập nhật link mới?")) {
+              await updateDoc(doc(db, "courses", courseId, "submissions", existingSub.id), {
+                link: linkInput,
+                timestamp: serverTimestamp()
+              });
+              alert("Cập nhật thành công!");
+            }
+          } else {
+            await addDoc(colSubmissions(), {
+              studentId: selectedStudentId,
+              assignmentId: selectedAssignId,
+              link: linkInput,
+              timestamp: serverTimestamp()
+            });
+            alert("Nộp bài thành công!");
+          }
+          setLinkInput("");
+        } catch (e) {
+          console.error(e);
+          alert("Có lỗi xảy ra khi nộp bài.");
+        }
+      };
+
+      const handleDeleteSubmission = async (subId) => {
+        if (!confirm("Bạn chắc chắn muốn xóa bài nộp này?")) return;
+        try {
+          await deleteDoc(doc(db, "courses", courseId, "submissions", subId));
+        } catch (e) {
+          console.error(e);
+          alert("Lỗi xóa bài nộp");
+        }
+      };
+
+      const handleEditRequest = (sub) => {
+        setSelectedAssignId(sub.assignmentId);
+        setLinkInput(sub.link);
+        setEditingSubId(sub.id);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      };
+
+      if (!user) {
+        return (
+          <div className="min-h-screen flex items-center justify-center text-gray-500">
+            Đang tải kết nối...
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-gray-100 font-sans text-gray-800">
+          <header className="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-50">
+            <div className="max-w-5xl mx-auto flex justify-between items-center">
+              <div>
+                <h1 className="text-xl font-bold flex items-center gap-2">
+                  <CheckCircle className="w-6 h-6" />
+                  Cổng Nộp Bài HTD
+                </h1>
+                {isAdminAuthenticated && (
+                  <div className="text-xs opacity-90">Khóa: {courseId}</div>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                {view !== "home" && (
+                  <button
+                    onClick={() => { setView("home"); setIsAdminAuthenticated(false); }}
+                    className="text-sm bg-blue-700 hover:bg-blue-800 px-3 py-1 rounded transition"
+                  >
+                    Thoát
+                  </button>
+                )}
+              </div>
+            </div>
+          </header>
+
+          <main className="max-w-5xl mx-auto p-4">
+            {view === "home" && (
+              <div className="flex flex-col md:flex-row gap-6 mt-10 justify-center items-center">
+                <div
+                  onClick={() => setView("student")}
+                  className="w-full md:w-64 h-48 bg-white rounded-xl shadow-lg hover:shadow-xl cursor-pointer flex flex-col items-center justify-center gap-4 transition transform hover:-translate-y-1 border border-gray-200"
+                >
+                  <User className="w-16 h-16 text-green-500" />
+                  <span className="text-xl font-semibold text-gray-700">Tôi là Học Viên</span>
+                </div>
+
+                <div
+                  onClick={() => setView("admin-login")}
+                  className="w-full md:w-64 h-48 bg-white rounded-xl shadow-lg hover:shadow-xl cursor-pointer flex flex-col items-center justify-center gap-4 transition transform hover:-translate-y-1 border border-gray-200"
+                >
+                  <Shield className="w-16 h-16 text-red-500" />
+                  <span className="text-xl font-semibold text-gray-700">Tôi là Admin</span>
+                </div>
+              </div>
+            )}
+
+            {view === "admin-login" && (
+              <div className="max-w-md mx-auto mt-20 bg-white p-8 rounded-xl shadow-lg">
+                <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">Đăng nhập Quản trị</h2>
+                <form onSubmit={handleAdminLogin} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Mật khẩu</label>
+                    <input
+                      type="password"
+                      value={adminPassInput}
+                      onChange={(e) => setAdminPassInput(e.target.value)}
+                      className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                      placeholder="Nhập mật khẩu..."
+                    />
+                  </div>
+                  <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded font-semibold hover:bg-blue-700 transition">
+                    Truy cập
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {view === "student" && (
+              <div className="space-y-6">
+                <div className="bg-white p-6 rounded-xl shadow-md border-t-4 border-green-500">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    <Edit2 className="w-5 h-5 text-green-600" />
+                    Nộp bài tập
+                  </h2>
+
+                  <div className="text-sm text-gray-500 mb-4">Khóa hiện tại: {courseId}</div>
+
+                  <form onSubmit={handleSubmitWork} className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">1. Tên của bạn</label>
+                      <select
+                        value={selectedStudentId}
+                        onChange={(e) => {
+                          setSelectedStudentId(e.target.value);
+                          setEditingSubId(null);
+                          setLinkInput("");
+                          setSelectedAssignId("");
+                        }}
+                        className="w-full p-2 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-green-500 outline-none"
+                        required
+                      >
+                        <option value="">-- Chọn tên học viên --</option>
+                        {students.map(s => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {selectedStudentId && (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">2. Chọn bài tập</label>
+                          <select
+                            value={selectedAssignId}
+                            onChange={(e) => setSelectedAssignId(e.target.value)}
+                            className="w-full p-2 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-green-500 outline-none"
+                            required
+                          >
+                            <option value="">-- Chọn bài tập --</option>
+                            {assignments.map(a => (
+                              <option key={a.id} value={a.id}>
+                                {a.title}
+                                {a.deadlineAt?.seconds ? ` — Hạn: ${new Date(a.deadlineAt.seconds * 1000).toLocaleDateString("vi-VN")}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">3. Link bài nộp</label>
+                          <input
+                            type="url"
+                            value={linkInput}
+                            onChange={(e) => setLinkInput(e.target.value)}
+                            placeholder="https://..."
+                            className="w-full p-2 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-green-500 outline-none"
+                            required
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          className={`w-full py-3 rounded-lg font-bold text-white transition shadow-md ${
+                            editingSubId ? "bg-orange-500 hover:bg-orange-600" : "bg-green-600 hover:bg-green-700"
+                          }`}
+                        >
+                          {editingSubId ? "Cập nhật bài nộp" : "Gửi bài nộp"}
+                        </button>
+
+                        {editingSubId && (
+                          <button
+                            type="button"
+                            onClick={() => { setEditingSubId(null); setLinkInput(""); }}
+                            className="w-full mt-2 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                          >
+                            Hủy chỉnh sửa
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </form>
+                </div>
+
+                {selectedStudentId && (
+                  <div className="bg-white p-6 rounded-xl shadow-md">
+                    <h3 className="text-lg font-bold mb-4 text-gray-700">
+                      Lịch sử nộp bài của: {getStudentName(selectedStudentId)}
+                    </h3>
+
+                    {mySubmissions.length === 0 ? (
+                      <p className="text-gray-500 italic">Chưa có bài nộp nào.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="border-b bg-gray-50">
+                              <th className="p-3 text-sm font-semibold text-gray-600">Bài tập</th>
+                              <th className="p-3 text-sm font-semibold text-gray-600">Link</th>
+                              <th className="p-3 text-sm font-semibold text-gray-600">Thời gian</th>
+                              <th className="p-3 text-sm font-semibold text-gray-600 text-right">Hành động</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {mySubmissions.map(sub => (
+                              <tr key={sub.id} className="border-b last:border-0 hover:bg-gray-50">
+                                <td className="p-3 font-medium text-gray-800">
+                                  {getAssignName(sub.assignmentId)}
+                                  {isLateSubmission(sub) && (
+                                    <span className="ml-2 inline-block text-xs font-semibold px-2 py-1 rounded bg-red-100 text-red-700">
+                                      TRỄ HẠN
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-3">
+                                  <a
+                                    href={sub.link}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-blue-600 hover:underline flex items-center gap-1 max-w-[160px] truncate"
+                                  >
+                                    Xem Link <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                </td>
+                                <td className="p-3 text-sm text-gray-500">
+                                  {sub.timestamp?.seconds
+                                    ? new Date(sub.timestamp.seconds * 1000).toLocaleString("vi-VN")
+                                    : "Vừa xong"}
+                                </td>
+                                <td className="p-3 text-right space-x-2">
+                                  <button
+                                    onClick={() => handleEditRequest(sub)}
+                                    className="text-orange-500 hover:text-orange-700 text-sm font-medium"
+                                  >
+                                    Sửa
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteSubmission(sub.id)}
+                                    className="text-red-500 hover:text-red-700 text-sm font-medium"
+                                  >
+                                    Xóa
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {view === "admin-dashboard" && isAdminAuthenticated && (
+              <div className="space-y-6">
+                <div className="bg-white p-4 rounded-xl shadow-md">
+                  <div className="flex flex-col md:flex-row gap-2 md:items-center md:justify-between">
+                    <div>
+                      <div className="text-sm text-gray-600">Đang quản trị khóa</div>
+                      <div className="text-lg font-bold text-gray-800">{courseId}</div>
+                    </div>
+
+                    <div className="flex flex-col md:flex-row gap-2">
+                      <input
+                        value={courseInput}
+                        onChange={(e) => setCourseInput(e.target.value)}
+                        placeholder="Nhập mã khóa, ví dụ: procreate-01"
+                        className="border p-2 rounded outline-none focus:ring-2 focus:ring-blue-500 w-full md:w-80"
+                      />
+                      <button
+                        onClick={() => applyCourseId(courseInput)}
+                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
+                      >
+                        Đổi khóa
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-gray-500 mt-2">
+                    Gợi ý: dùng mã không dấu, không khoảng trắng. Ví dụ:
+                    <span className="font-semibold"> procreate-thang-4</span>
+                  </div>
+
+                  <div className="text-xs text-gray-500 mt-1">
+                    Link học viên theo khóa:
+                    <span className="font-semibold">
+                      {" "}{window.location.origin}{window.location.pathname}?course={courseId}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 border-b pb-2">
+                  <button
+                    onClick={() => setAdminTab("report")}
+                    className={`px-4 py-2 rounded-lg font-medium transition ${
+                      adminTab === "report" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    Báo cáo Tổng quan
+                  </button>
+                  <button
+                    onClick={() => setAdminTab("students")}
+                    className={`px-4 py-2 rounded-lg font-medium transition ${
+                      adminTab === "students" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    QL Học viên
+                  </button>
+                  <button
+                    onClick={() => setAdminTab("assignments")}
+                    className={`px-4 py-2 rounded-lg font-medium transition ${
+                      adminTab === "assignments" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-100"
+                    }`}
+                  >
+                    QL Bài tập
+                  </button>
+                </div>
+
+                {adminTab === "report" && (
+                  <div className="bg-white p-4 rounded-xl shadow-md overflow-hidden">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-lg font-bold text-gray-800">Tiến độ nộp bài</h3>
+                      <button
+                        onClick={exportToCSV}
+                        className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition shadow-sm"
+                      >
+                        <FileSpreadsheet className="w-4 h-4" /> Xuất Excel
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                      <div className="bg-gray-50 border rounded-lg p-4">
+                        <div className="text-sm text-gray-600">Tỷ lệ nộp tổng quan</div>
+                        <div className="text-2xl font-bold">{overallPercent}%</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {totalSubmitted}/{totalRequired} lượt nộp
+                        </div>
+                      </div>
+
+                      <div className="bg-gray-50 border rounded-lg p-4 md:col-span-2">
+                        <div className="text-sm text-gray-600 mb-2">Ai chưa nộp theo bài</div>
+
+                        <div className="flex flex-col md:flex-row gap-2">
+                          <select
+                            value={missingAssignId}
+                            onChange={(e) => setMissingAssignId(e.target.value)}
+                            className="border rounded p-2 bg-white w-full md:w-80"
+                          >
+                            <option value="">-- Chọn bài tập --</option>
+                            {assignments.map(a => (
+                              <option key={a.id} value={a.id}>{a.title}</option>
+                            ))}
+                          </select>
+
+                          <div className="text-sm text-gray-700 flex-1">
+                            {missingAssignId ? (
+                              <>
+                                <div className="font-semibold mb-1">
+                                  Chưa nộp ({missingStudentsForSelectedAssignment.length})
+                                </div>
+                                <div className="max-h-24 overflow-auto text-gray-600">
+                                  {missingStudentsForSelectedAssignment.length === 0
+                                    ? "Tất cả đã nộp."
+                                    : missingStudentsForSelectedAssignment.map(s => s.name).join(", ")}
+                                </div>
+                              </>
+                            ) : (
+                              <div className="text-gray-500">Chọn 1 bài để xem danh sách.</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto border rounded-lg">
+                      <table className="w-full text-center border-collapse text-sm">
+                        <thead>
+                          <tr className="bg-gray-100 text-gray-700">
+                            <th className="p-3 border-r border-b min-w-[180px] text-left sticky left-0 bg-gray-100 z-10">
+                              HỌ TÊN HỌC VIÊN
+                            </th>
+                            {assignments.map(a => (
+                              <th key={a.id} className="p-3 border-b min-w-[120px] font-semibold">{a.title}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {students.map((stu, idx) => (
+                            <tr key={stu.id} className="hover:bg-gray-50">
+                              <td className="p-3 border-r border-b text-left font-medium sticky left-0 bg-white z-10">
+                                {idx + 1}. {stu.name}
+                              </td>
+                              {assignments.map(assign => {
+                                const sub = submissions.find(s => s.studentId === stu.id && s.assignmentId === assign.id);
+                                return (
+                                  <td key={assign.id} className="p-3 border-b">
+                                    {sub ? (
+                                      <a
+                                        href={sub.link}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-block text-green-600 font-bold text-lg hover:scale-125 transition transform"
+                                        title="Đã nộp"
+                                      >
+                                        ✓
+                                      </a>
+                                    ) : isOverdueMissing(stu.id, assign.id) ? (
+                                      <span className="text-red-600 font-semibold">Quá hạn</span>
+                                    ) : (
+                                      <span className="text-gray-300">-</span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                          {students.length === 0 && (
+                            <tr>
+                              <td colSpan={assignments.length + 1} className="p-4 text-gray-400">Chưa có dữ liệu học viên</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {adminTab === "students" && (
+                  <div className="bg-white p-6 rounded-xl shadow-md">
+                    <h3 className="font-bold mb-4">Danh sách Học Viên ({students.length})</h3>
+                    <div className="flex gap-2 mb-6">
+                      <input
+                        type="text"
+                        value={newStudentName}
+                        onChange={(e) => setNewStudentName(e.target.value)}
+                        placeholder="Nhập tên học viên mới..."
+                        className="flex-1 border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                      <button onClick={addStudent} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-1">
+                        <Plus className="w-4 h-4" /> Thêm
+                      </button>
+                    </div>
+                    <div className="grid gap-2 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+                      {students.map(s => (
+                        <div key={s.id} className="flex justify-between items-center p-3 bg-gray-50 rounded border group hover:border-blue-300">
+                          <span className="font-medium">{s.name}</span>
+                          <button onClick={() => deleteStudent(s.id)} className="text-gray-400 hover:text-red-500 transition">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {adminTab === "assignments" && (
+                  <div className="bg-white p-6 rounded-xl shadow-md">
+                    <h3 className="font-bold mb-4">Danh sách Bài Tập ({assignments.length})</h3>
+                    <div className="flex flex-col md:flex-row gap-2 mb-6">
+                      <input
+                        type="text"
+                        value={newAssignName}
+                        onChange={(e) => setNewAssignName(e.target.value)}
+                        placeholder="VD: Bài tập 1..."
+                        className="flex-1 border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+
+                      <input
+                        type="date"
+                        value={newAssignDeadlineDate}
+                        onChange={(e) => setNewAssignDeadlineDate(e.target.value)}
+                        className="border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                        title="Deadline theo ngày"
+                      />
+
+                      <button
+                        onClick={addAssignment}
+                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-1"
+                      >
+                        <Plus className="w-4 h-4" /> Thêm
+                      </button>
+                    </div>
+
+                    <ul className="space-y-2">
+                      {assignments.map((a, idx) => (
+                        <li key={a.id} className="flex justify-between items-center p-3 bg-gray-50 rounded border">
+                          <span className="font-medium">
+                            <span className="text-blue-600 font-bold mr-2">#{idx + 1}</span>
+                            {a.title}
+                            {a.deadlineAt?.seconds && (
+                              <span className="ml-2 text-xs text-gray-500">
+                                (Hạn: {new Date(a.deadlineAt.seconds * 1000).toLocaleDateString("vi-VN")})
+                              </span>
+                            )}
+                          </span>
+                          <button onClick={() => deleteAssignment(a.id)} className="text-gray-400 hover:text-red-500 transition">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    createRoot(document.getElementById("root")).render(<App />);
+  </script>
 </body>
 </html>
