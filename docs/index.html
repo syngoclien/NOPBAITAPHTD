@@ -19,7 +19,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import {
       getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
-      onSnapshot, query, orderBy, serverTimestamp, Timestamp
+      onSnapshot, query, orderBy, serverTimestamp, Timestamp, setDoc
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
     import {
       getAuth, signInAnonymously, onAuthStateChanged
@@ -27,19 +27,18 @@
 
     import {
       User, Shield, Plus, Trash2, FileSpreadsheet,
-      ExternalLink, Edit2, CheckCircle
+      ExternalLink, Edit2, CheckCircle, Search
     } from "https://esm.sh/lucide-react@0.344.0";
 
-    // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
-  apiKey: "AIzaSyCKsqJemCRXkCHYv8-pMo3mT97XeQDmFsA",
-  authDomain: "nopbaitaphtd.firebaseapp.com",
-  projectId: "nopbaitaphtd",
-  storageBucket: "nopbaitaphtd.firebasestorage.app",
-  messagingSenderId: "249209694095",
-  appId: "1:249209694095:web:e06a032c790303ba53cdfa",
-  measurementId: "G-4F0TD9MS7F"
-};
+    const firebaseConfig = {
+      apiKey: "AIzaSyCKsqJemCRXkCHYv8-pMo3mT97XeQDmFsA",
+      authDomain: "nopbaitaphtd.firebaseapp.com",
+      projectId: "nopbaitaphtd",
+      storageBucket: "nopbaitaphtd.firebasestorage.app",
+      messagingSenderId: "249209694095",
+      appId: "1:249209694095:web:e06a032c790303ba53cdfa",
+      measurementId: "G-4F0TD9MS7F"
+    };
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
@@ -56,9 +55,11 @@ const firebaseConfig = {
       const [courseId, setCourseId] = useState(() => {
         return getCourseFromURL() || localStorage.getItem("COURSE_ID") || "khoa-mac-dinh";
       });
-      const [courseInput, setCourseInput] = useState(() => {
-        return getCourseFromURL() || localStorage.getItem("COURSE_ID") || "khoa-mac-dinh";
-      });
+
+      const [selectedExistingCourse, setSelectedExistingCourse] = useState("");
+      const [newCourseInput, setNewCourseInput] = useState("");
+      const [courseOptions, setCourseOptions] = useState([]);
+      const [courseSearch, setCourseSearch] = useState("");
 
       const [user, setUser] = useState(null);
       const [view, setView] = useState("home");
@@ -81,22 +82,108 @@ const firebaseConfig = {
 
       const [adminTab, setAdminTab] = useState("report");
 
-      const applyCourseId = (nextId) => {
-        const clean = String(nextId || "").trim();
+      const normalizeCourseId = (value) =>
+        String(value || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, "");
+
+      const ensureCourseDoc = async (id) => {
+        const clean = String(id || "").trim();
+        if (!clean) return;
+
+        await setDoc(
+          doc(db, "courses", clean),
+          {
+            name: clean,
+            updatedAt: serverTimestamp()
+          },
+          { merge: true }
+        );
+      };
+
+      const switchCourse = async (targetCourseId) => {
+        const clean = String(targetCourseId || "").trim();
+
         if (!clean) {
-          alert("Mã khóa không được để trống.");
+          alert("Tên khóa không được để trống.");
           return;
         }
 
+        if (clean.includes("/")) {
+          alert("Tên khóa không được chứa dấu /");
+          return;
+        }
+
+        await ensureCourseDoc(clean);
+
         localStorage.setItem("COURSE_ID", clean);
         setCourseId(clean);
-        setCourseInput(clean);
+        setSelectedExistingCourse(clean);
+        setNewCourseInput("");
+        setCourseSearch("");
+
+        const url = new URL(window.location.href);
+        url.searchParams.set("course", clean);
+        window.history.replaceState({}, "", url.toString());
 
         setSelectedStudentId("");
         setSelectedAssignId("");
         setLinkInput("");
         setEditingSubId(null);
       };
+
+      const handleSwitchExistingCourse = async () => {
+        if (!selectedExistingCourse) {
+          alert("Vui lòng chọn khóa.");
+          return;
+        }
+
+        try {
+          await switchCourse(selectedExistingCourse);
+        } catch (e) {
+          console.error(e);
+          alert("Không thể đổi khóa.");
+        }
+      };
+
+      const handleCreateOrOpenNewCourse = async () => {
+        const raw = String(newCourseInput || "").trim();
+
+        if (!raw) {
+          alert("Vui lòng nhập tên khóa mới.");
+          return;
+        }
+
+        const existed = courseOptions.find(
+          (item) => normalizeCourseId(item) === normalizeCourseId(raw)
+        );
+
+        const clean = existed || raw;
+
+        try {
+          if (!existed) {
+            const ok = window.confirm(`Khóa "${clean}" chưa có. Tạo khóa mới?`);
+            if (!ok) return;
+          }
+
+          await switchCourse(clean);
+        } catch (e) {
+          console.error(e);
+          alert("Không thể tạo hoặc mở khóa.");
+        }
+      };
+
+      const filteredCourseOptions = useMemo(() => {
+        const keyword = normalizeCourseId(courseSearch);
+        if (!keyword) return courseOptions;
+
+        return courseOptions.filter((course) =>
+          normalizeCourseId(course).includes(keyword)
+        );
+      }, [courseOptions, courseSearch]);
 
       const colStudents = () => collection(db, "courses", courseId, "students");
       const colAssignments = () => collection(db, "courses", courseId, "assignments");
@@ -107,6 +194,29 @@ const firebaseConfig = {
         const unsub = onAuthStateChanged(auth, setUser);
         return () => unsub();
       }, []);
+
+      useEffect(() => {
+        const unsubCourses = onSnapshot(
+          collection(db, "courses"),
+          (snap) => {
+            const list = snap.docs
+              .map((d) => d.id)
+              .filter(Boolean)
+              .sort((a, b) => a.localeCompare(b, "vi"));
+
+            setCourseOptions(list);
+          },
+          (err) => console.error("Lỗi tải danh sách khóa:", err)
+        );
+
+        return () => unsubCourses();
+      }, []);
+
+      useEffect(() => {
+        if (courseId) {
+          setSelectedExistingCourse(courseId);
+        }
+      }, [courseId]);
 
       useEffect(() => {
         if (!user) return;
@@ -186,12 +296,18 @@ const firebaseConfig = {
         );
       }, [students, submissions, missingAssignId]);
 
-      const handleAdminLogin = (e) => {
+      const handleAdminLogin = async (e) => {
         e.preventDefault();
         if (adminPassInput === ADMIN_PASSWORD) {
-          setIsAdminAuthenticated(true);
-          setView("admin-dashboard");
-          setAdminPassInput("");
+          try {
+            await ensureCourseDoc(courseId);
+            setIsAdminAuthenticated(true);
+            setView("admin-dashboard");
+            setAdminPassInput("");
+          } catch (e) {
+            console.error(e);
+            alert("Không thể mở trang quản trị.");
+          }
         } else {
           alert("Sai mật khẩu!");
         }
@@ -200,6 +316,7 @@ const firebaseConfig = {
       const addStudent = async () => {
         if (!newStudentName.trim()) return;
         try {
+          await ensureCourseDoc(courseId);
           await addDoc(colStudents(), {
             name: newStudentName.trim(),
             createdAt: serverTimestamp()
@@ -225,6 +342,8 @@ const firebaseConfig = {
         if (!newAssignName.trim()) return;
 
         try {
+          await ensureCourseDoc(courseId);
+
           let deadlineAt = null;
           if (newAssignDeadlineDate) {
             const endOfDay = new Date(`${newAssignDeadlineDate}T23:59:59`);
@@ -295,6 +414,8 @@ const firebaseConfig = {
         );
 
         try {
+          await ensureCourseDoc(courseId);
+
           if (editingSubId) {
             await updateDoc(doc(db, "courses", courseId, "submissions", editingSubId), {
               link: linkInput,
@@ -579,29 +700,78 @@ const firebaseConfig = {
             {view === "admin-dashboard" && isAdminAuthenticated && (
               <div className="space-y-6">
                 <div className="bg-white p-4 rounded-xl shadow-md">
-                  <div className="flex flex-col md:flex-row gap-2 md:items-center md:justify-between">
+                  <div className="flex flex-col gap-4">
                     <div>
                       <div className="text-sm text-gray-600">Đang quản trị khóa</div>
                       <div className="text-lg font-bold text-gray-800">{courseId}</div>
                     </div>
 
-                    <div className="flex flex-col md:flex-row gap-2">
-                      <input
-                        value={courseInput}
-                        onChange={(e) => setCourseInput(e.target.value)}
-                        placeholder="Nhập mã khóa, ví dụ: procreate-01"
-                        className="border p-2 rounded outline-none focus:ring-2 focus:ring-blue-500 w-full md:w-80"
-                      />
-                      <button
-                        onClick={() => applyCourseId(courseInput)}
-                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
-                      >
-                        Đổi khóa
-                      </button>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="border rounded-lg p-4 bg-gray-50">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Chọn khóa đã có
+                        </label>
+
+                        <div className="relative mb-3">
+                          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            value={courseSearch}
+                            onChange={(e) => setCourseSearch(e.target.value)}
+                            placeholder="Tìm khóa..."
+                            className="w-full border p-2 pl-9 rounded outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                          />
+                        </div>
+
+                        <select
+                          value={selectedExistingCourse}
+                          onChange={(e) => setSelectedExistingCourse(e.target.value)}
+                          className="w-full border p-2 rounded outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                          size={Math.min(Math.max(filteredCourseOptions.length, 4), 8)}
+                        >
+                          {filteredCourseOptions.length === 0 ? (
+                            <option value="">Không có khóa phù hợp</option>
+                          ) : (
+                            filteredCourseOptions.map((course) => (
+                              <option key={course} value={course}>
+                                {course}
+                              </option>
+                            ))
+                          )}
+                        </select>
+
+                        <div className="mt-2 text-xs text-gray-500">
+                          {filteredCourseOptions.length} khóa hiển thị / {courseOptions.length} khóa
+                        </div>
+
+                        <button
+                          onClick={handleSwitchExistingCourse}
+                          className="mt-3 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition w-full md:w-auto"
+                        >
+                          Mở khóa đã chọn
+                        </button>
+                      </div>
+
+                      <div className="border rounded-lg p-4 bg-gray-50">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Hoặc tạo khóa mới
+                        </label>
+                        <input
+                          value={newCourseInput}
+                          onChange={(e) => setNewCourseInput(e.target.value)}
+                          placeholder="Nhập tên khóa mới"
+                          className="w-full border p-2 rounded outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        />
+                        <button
+                          onClick={handleCreateOrOpenNewCourse}
+                          className="mt-3 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition w-full md:w-auto"
+                        >
+                          Tạo / Mở khóa
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="text-xs text-gray-500 mt-2">
+                  <div className="text-xs text-gray-500 mt-3">
                     Gợi ý: dùng mã không dấu, không khoảng trắng. Ví dụ:
                     <span className="font-semibold"> procreate-thang-4</span>
                   </div>
