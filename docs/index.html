@@ -71,8 +71,10 @@
       const [adminPassInput, setAdminPassInput] = useState("");
       const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
       const [newStudentName, setNewStudentName] = useState("");
+      const [editingStudentId, setEditingStudentId] = useState(null);
       const [newAssignName, setNewAssignName] = useState("");
       const [newAssignDeadlineDate, setNewAssignDeadlineDate] = useState("");
+      const [editingAssignId, setEditingAssignId] = useState(null);
       const [missingAssignId, setMissingAssignId] = useState("");
 
       const [selectedStudentId, setSelectedStudentId] = useState("");
@@ -313,19 +315,40 @@
         }
       };
 
-      const addStudent = async () => {
+      const saveStudent = async () => {
         if (!newStudentName.trim()) return;
         try {
           await ensureCourseDoc(courseId);
-          await addDoc(colStudents(), {
-            name: newStudentName.trim(),
-            createdAt: serverTimestamp()
-          });
+
+          if (editingStudentId) {
+            await updateDoc(doc(db, "courses", courseId, "students", editingStudentId), {
+              name: newStudentName.trim()
+            });
+            alert("Đã cập nhật học viên!");
+          } else {
+            await addDoc(colStudents(), {
+              name: newStudentName.trim(),
+              createdAt: serverTimestamp()
+            });
+          }
+
           setNewStudentName("");
+          setEditingStudentId(null);
         } catch (e) {
           console.error(e);
-          alert("Lỗi thêm học viên");
+          alert(editingStudentId ? "Lỗi cập nhật học viên" : "Lỗi thêm học viên");
         }
+      };
+
+      const startEditStudent = (student) => {
+        setEditingStudentId(student.id);
+        setNewStudentName(student.name || "");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      };
+
+      const cancelEditStudent = () => {
+        setEditingStudentId(null);
+        setNewStudentName("");
       };
 
       const deleteStudent = async (id) => {
@@ -338,7 +361,7 @@
         }
       };
 
-      const addAssignment = async () => {
+      const saveAssignment = async () => {
         if (!newAssignName.trim()) return;
 
         try {
@@ -352,18 +375,44 @@
             }
           }
 
-          await addDoc(colAssignments(), {
-            title: newAssignName.trim(),
-            createdAt: serverTimestamp(),
-            deadlineAt
-          });
+          if (editingAssignId) {
+            await updateDoc(doc(db, "courses", courseId, "assignments", editingAssignId), {
+              title: newAssignName.trim(),
+              deadlineAt
+            });
+            alert("Đã cập nhật bài tập!");
+          } else {
+            await addDoc(colAssignments(), {
+              title: newAssignName.trim(),
+              createdAt: serverTimestamp(),
+              deadlineAt
+            });
+          }
 
           setNewAssignName("");
           setNewAssignDeadlineDate("");
+          setEditingAssignId(null);
         } catch (e) {
           console.error(e);
-          alert("Lỗi thêm bài tập");
+          alert(editingAssignId ? "Lỗi cập nhật bài tập" : "Lỗi thêm bài tập");
         }
+      };
+
+      const startEditAssignment = (assignment) => {
+        setEditingAssignId(assignment.id);
+        setNewAssignName(assignment.title || "");
+        setNewAssignDeadlineDate(
+          assignment.deadlineAt?.seconds
+            ? new Date(assignment.deadlineAt.seconds * 1000).toISOString().slice(0, 10)
+            : ""
+        );
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      };
+
+      const cancelEditAssignment = () => {
+        setEditingAssignId(null);
+        setNewAssignName("");
+        setNewAssignDeadlineDate("");
       };
 
       const deleteAssignment = async (id) => {
@@ -923,25 +972,36 @@
                 {adminTab === "students" && (
                   <div className="bg-white p-6 rounded-xl shadow-md">
                     <h3 className="font-bold mb-4">Danh sách Học Viên ({students.length})</h3>
-                    <div className="flex gap-2 mb-6">
+                    <div className="flex flex-col md:flex-row gap-2 mb-6">
                       <input
                         type="text"
                         value={newStudentName}
                         onChange={(e) => setNewStudentName(e.target.value)}
-                        placeholder="Nhập tên học viên mới..."
+                        placeholder={editingStudentId ? "Sửa tên học viên..." : "Nhập tên học viên mới..."}
                         className="flex-1 border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
                       />
-                      <button onClick={addStudent} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-1">
-                        <Plus className="w-4 h-4" /> Thêm
+                      <button onClick={saveStudent} className={`text-white px-4 py-2 rounded transition flex items-center justify-center gap-1 ${editingStudentId ? "bg-orange-500 hover:bg-orange-600" : "bg-blue-600 hover:bg-blue-700"}`}>
+                        {editingStudentId ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                        {editingStudentId ? "Lưu sửa" : "Thêm"}
                       </button>
+                      {editingStudentId && (
+                        <button onClick={cancelEditStudent} className="px-4 py-2 rounded border hover:bg-gray-50 transition">
+                          Hủy
+                        </button>
+                      )}
                     </div>
                     <div className="grid gap-2 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                       {students.map(s => (
-                        <div key={s.id} className="flex justify-between items-center p-3 bg-gray-50 rounded border group hover:border-blue-300">
-                          <span className="font-medium">{s.name}</span>
-                          <button onClick={() => deleteStudent(s.id)} className="text-gray-400 hover:text-red-500 transition">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                        <div key={s.id} className="flex justify-between items-center gap-3 p-3 bg-gray-50 rounded border group hover:border-blue-300">
+                          <span className="font-medium flex-1">{s.name}</span>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <button onClick={() => startEditStudent(s)} className="text-blue-500 hover:text-blue-700 transition text-sm font-medium">
+                              Sửa
+                            </button>
+                            <button onClick={() => deleteStudent(s.id)} className="text-gray-400 hover:text-red-500 transition">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -956,7 +1016,7 @@
                         type="text"
                         value={newAssignName}
                         onChange={(e) => setNewAssignName(e.target.value)}
-                        placeholder="VD: Bài tập 1..."
+                        placeholder={editingAssignId ? "Sửa tên bài tập..." : "VD: Bài tập 1..."}
                         className="flex-1 border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
                       />
 
@@ -969,17 +1029,27 @@
                       />
 
                       <button
-                        onClick={addAssignment}
-                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-1"
+                        onClick={saveAssignment}
+                        className={`text-white px-4 py-2 rounded transition flex items-center justify-center gap-1 ${editingAssignId ? "bg-orange-500 hover:bg-orange-600" : "bg-blue-600 hover:bg-blue-700"}`}
                       >
-                        <Plus className="w-4 h-4" /> Thêm
+                        {editingAssignId ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                        {editingAssignId ? "Lưu sửa" : "Thêm"}
                       </button>
+
+                      {editingAssignId && (
+                        <button
+                          onClick={cancelEditAssignment}
+                          className="px-4 py-2 rounded border hover:bg-gray-50 transition"
+                        >
+                          Hủy
+                        </button>
+                      )}
                     </div>
 
                     <ul className="space-y-2">
                       {assignments.map((a, idx) => (
-                        <li key={a.id} className="flex justify-between items-center p-3 bg-gray-50 rounded border">
-                          <span className="font-medium">
+                        <li key={a.id} className="flex justify-between items-center gap-3 p-3 bg-gray-50 rounded border">
+                          <span className="font-medium flex-1">
                             <span className="text-blue-600 font-bold mr-2">#{idx + 1}</span>
                             {a.title}
                             {a.deadlineAt?.seconds && (
@@ -988,9 +1058,14 @@
                               </span>
                             )}
                           </span>
-                          <button onClick={() => deleteAssignment(a.id)} className="text-gray-400 hover:text-red-500 transition">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <button onClick={() => startEditAssignment(a)} className="text-blue-500 hover:text-blue-700 transition text-sm font-medium">
+                              Sửa
+                            </button>
+                            <button onClick={() => deleteAssignment(a.id)} className="text-gray-400 hover:text-red-500 transition">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </li>
                       ))}
                     </ul>
