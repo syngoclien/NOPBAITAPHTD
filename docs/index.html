@@ -77,6 +77,11 @@
       const [editingAssignId, setEditingAssignId] = useState(null);
       const [missingAssignId, setMissingAssignId] = useState("");
 
+      // Sửa riêng ngày nộp cho trường hợp học viên đã nộp đúng hạn nhưng sau đó cập nhật link
+      const [adjustSubmitStudentId, setAdjustSubmitStudentId] = useState("");
+      const [adjustSubmitAssignId, setAdjustSubmitAssignId] = useState("");
+      const [adjustSubmitDate, setAdjustSubmitDate] = useState("");
+
       const [selectedStudentId, setSelectedStudentId] = useState("");
       const [selectedAssignId, setSelectedAssignId] = useState("");
       const [linkInput, setLinkInput] = useState("");
@@ -308,9 +313,24 @@
         return toMillis(a?.deadlineAt);
       };
 
+      // Ngày dùng để xét deadline là ngày nộp lần đầu.
+      // Với dữ liệu cũ chưa có submittedAt, tạm dùng timestamp cũ để không làm hỏng dữ liệu hiện tại.
+      const getSubmissionSubmitMillis = (sub) => {
+        return toMillis(sub?.submittedAt) || toMillis(sub?.timestamp);
+      };
+
+      const toDateInputValue = (millis) => {
+        if (!millis) return "";
+        const d = new Date(millis);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      };
+
       const isLateSubmission = (sub) => {
         const dl = getDeadlineMillis(sub.assignmentId);
-        const sm = toMillis(sub?.timestamp);
+        const sm = getSubmissionSubmitMillis(sub);
         if (!dl || !sm) return false;
         return sm > dl;
       };
@@ -347,6 +367,48 @@
           !submissions.some(s => s.studentId === stu.id && s.assignmentId === missingAssignId)
         );
       }, [students, submissions, missingAssignId]);
+
+      const selectedAdjustSubmission = useMemo(() => {
+        if (!adjustSubmitStudentId || !adjustSubmitAssignId) return null;
+        return submissions.find(s =>
+          s.studentId === adjustSubmitStudentId && s.assignmentId === adjustSubmitAssignId
+        ) || null;
+      }, [submissions, adjustSubmitStudentId, adjustSubmitAssignId]);
+
+      useEffect(() => {
+        const millis = getSubmissionSubmitMillis(selectedAdjustSubmission);
+        setAdjustSubmitDate(millis ? toDateInputValue(millis) : "");
+      }, [selectedAdjustSubmission?.id]);
+
+      const saveAdjustedSubmissionDate = async () => {
+        if (!selectedAdjustSubmission) {
+          alert("Chưa tìm thấy bài nộp của học viên cho bài tập này.");
+          return;
+        }
+
+        if (!adjustSubmitDate) {
+          alert("Vui lòng chọn lại ngày nộp.");
+          return;
+        }
+
+        try {
+          const submitDate = new Date(`${adjustSubmitDate}T12:00:00`);
+          if (isNaN(submitDate.getTime())) {
+            alert("Ngày nộp không hợp lệ.");
+            return;
+          }
+
+          await updateDoc(doc(db, "courses", courseId, "submissions", selectedAdjustSubmission.id), {
+            submittedAt: Timestamp.fromDate(submitDate),
+            manuallyAdjustedAt: serverTimestamp()
+          });
+
+          alert("Đã sửa ngày nộp cho học viên này!");
+        } catch (e) {
+          console.error(e);
+          alert("Không thể sửa ngày nộp.");
+        }
+      };
 
       const handleAdminLogin = async (e) => {
         e.preventDefault();
@@ -523,7 +585,7 @@
           if (editingSubId) {
             await updateDoc(doc(db, "courses", courseId, "submissions", editingSubId), {
               link: linkInput,
-              timestamp: serverTimestamp()
+              updatedAt: serverTimestamp()
             });
             setEditingSubId(null);
             alert("Cập nhật bài nộp thành công!");
@@ -531,7 +593,7 @@
             if (confirm("Bạn đã nộp bài này rồi. Cập nhật link mới?")) {
               await updateDoc(doc(db, "courses", courseId, "submissions", existingSub.id), {
                 link: linkInput,
-                timestamp: serverTimestamp()
+                updatedAt: serverTimestamp()
               });
               alert("Cập nhật thành công!");
             }
@@ -540,7 +602,9 @@
               studentId: selectedStudentId,
               assignmentId: selectedAssignId,
               link: linkInput,
-              timestamp: serverTimestamp()
+              submittedAt: serverTimestamp(),
+              timestamp: serverTimestamp(),
+              updatedAt: serverTimestamp()
             });
             alert("Nộp bài thành công!");
           }
@@ -784,9 +848,14 @@
                                   </a>
                                 </td>
                                 <td className="p-3 text-sm text-gray-500">
-                                  {sub.timestamp?.seconds
-                                    ? new Date(sub.timestamp.seconds * 1000).toLocaleString("vi-VN")
+                                  {getSubmissionSubmitMillis(sub)
+                                    ? new Date(getSubmissionSubmitMillis(sub)).toLocaleString("vi-VN")
                                     : "Vừa xong"}
+                                  {sub.updatedAt?.seconds && (
+                                    <div className="text-xs text-gray-400 mt-1">
+                                      Cập nhật: {new Date(sub.updatedAt.seconds * 1000).toLocaleString("vi-VN")}
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="p-3 text-right space-x-2">
                                   <button
@@ -1006,6 +1075,67 @@
                       </div>
                     </div>
 
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+                      <div className="font-semibold text-amber-900 mb-2">Sửa riêng ngày nộp cho học viên</div>
+                      <div className="text-sm text-amber-800 mb-3">
+                        Dùng khi học viên đã nộp đúng hạn nhưng sau đó sửa link làm dữ liệu cũ bị báo trễ. Ngày này sẽ được dùng để xét deadline thay cho thời gian cập nhật link.
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                        <select
+                          value={adjustSubmitStudentId}
+                          onChange={(e) => setAdjustSubmitStudentId(e.target.value)}
+                          className="border rounded p-2 bg-white"
+                        >
+                          <option value="">-- Chọn học viên --</option>
+                          {students.map(s => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+
+                        <select
+                          value={adjustSubmitAssignId}
+                          onChange={(e) => setAdjustSubmitAssignId(e.target.value)}
+                          className="border rounded p-2 bg-white"
+                        >
+                          <option value="">-- Chọn bài tập --</option>
+                          {assignments.map(a => (
+                            <option key={a.id} value={a.id}>{a.title}</option>
+                          ))}
+                        </select>
+
+                        <input
+                          type="date"
+                          value={adjustSubmitDate}
+                          onChange={(e) => setAdjustSubmitDate(e.target.value)}
+                          className="border rounded p-2 bg-white"
+                        />
+
+                        <button
+                          onClick={saveAdjustedSubmissionDate}
+                          className="bg-amber-600 text-white px-4 py-2 rounded hover:bg-amber-700 transition"
+                        >
+                          Lưu ngày nộp
+                        </button>
+                      </div>
+
+                      {adjustSubmitStudentId && adjustSubmitAssignId && (
+                        <div className="text-sm mt-3">
+                          {selectedAdjustSubmission ? (
+                            <div className="text-gray-700">
+                              Đã tìm thấy bài nộp. Trạng thái hiện tại: {isLateSubmission(selectedAdjustSubmission) ? (
+                                <span className="font-semibold text-red-600">Trễ hạn</span>
+                              ) : (
+                                <span className="font-semibold text-green-600">Đúng hạn</span>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-red-600 font-medium">Chưa tìm thấy bài nộp của học viên này cho bài tập đã chọn.</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                     <div className="overflow-x-auto border rounded-lg">
                       <table className="w-full text-center border-collapse text-sm">
                         <thead>
@@ -1029,15 +1159,20 @@
                                 return (
                                   <td key={assign.id} className="p-3 border-b">
                                     {sub ? (
-                                      <a
-                                        href={sub.link}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="inline-block text-green-600 font-bold text-lg hover:scale-125 transition transform"
-                                        title="Đã nộp"
-                                      >
-                                        ✓
-                                      </a>
+                                      <div className="flex flex-col items-center gap-1">
+                                        <a
+                                          href={sub.link}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className={`inline-block font-bold text-lg hover:scale-125 transition transform ${isLateSubmission(sub) ? "text-red-600" : "text-green-600"}`}
+                                          title={isLateSubmission(sub) ? "Đã nộp nhưng trễ hạn" : "Đã nộp đúng hạn"}
+                                        >
+                                          ✓
+                                        </a>
+                                        {isLateSubmission(sub) && (
+                                          <span className="text-[10px] text-red-600 font-semibold">Trễ</span>
+                                        )}
+                                      </div>
                                     ) : isOverdueMissing(stu.id, assign.id) ? (
                                       <span className="text-red-600 font-semibold">Quá hạn</span>
                                     ) : (
@@ -1069,6 +1204,7 @@
                         onChange={(e) => setNewStudentName(e.target.value)}
                         placeholder={editingStudentId ? "Sửa tên học viên..." : "Nhập tên học viên mới..."}
                         className="flex-1 border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                        onKeyDown={(e) => { if (e.key === "Enter") saveStudent(); }}
                       />
                       <button onClick={saveStudent} className={`text-white px-4 py-2 rounded transition flex items-center justify-center gap-1 ${editingStudentId ? "bg-orange-500 hover:bg-orange-600" : "bg-blue-600 hover:bg-blue-700"}`}>
                         {editingStudentId ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
@@ -1108,6 +1244,7 @@
                         onChange={(e) => setNewAssignName(e.target.value)}
                         placeholder={editingAssignId ? "Sửa tên bài tập..." : "VD: Bài tập 1..."}
                         className="flex-1 border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                        onKeyDown={(e) => { if (e.key === "Enter") saveAssignment(); }}
                       />
 
                       <input
