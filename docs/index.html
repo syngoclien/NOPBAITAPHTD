@@ -19,7 +19,8 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import {
       getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
-      onSnapshot, query, orderBy, serverTimestamp, Timestamp, setDoc
+      onSnapshot, query, orderBy, serverTimestamp, Timestamp, setDoc,
+      getDocs, writeBatch
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
     import {
       getAuth, signInAnonymously, onAuthStateChanged
@@ -77,11 +78,6 @@
       const [editingAssignId, setEditingAssignId] = useState(null);
       const [missingAssignId, setMissingAssignId] = useState("");
 
-      // Sửa riêng ngày nộp cho trường hợp học viên đã nộp đúng hạn nhưng sau đó cập nhật link
-      const [adjustSubmitStudentId, setAdjustSubmitStudentId] = useState("");
-      const [adjustSubmitAssignId, setAdjustSubmitAssignId] = useState("");
-      const [adjustSubmitDate, setAdjustSubmitDate] = useState("");
-
       const [selectedStudentId, setSelectedStudentId] = useState("");
       const [selectedAssignId, setSelectedAssignId] = useState("");
       const [linkInput, setLinkInput] = useState("");
@@ -89,6 +85,8 @@
 
       const [adminTab, setAdminTab] = useState("report");
       const [copyLinkStatus, setCopyLinkStatus] = useState("");
+      const [renameCourseInput, setRenameCourseInput] = useState("");
+      const [isRenamingCourse, setIsRenamingCourse] = useState(false);
 
       const normalizeCourseId = (value) =>
         String(value || "")
@@ -97,6 +95,16 @@
           .trim()
           .toLowerCase()
           .replace(/\s+/g, "");
+
+      const slugifyCourseId = (value) =>
+        String(value || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .replace(/-{2,}/g, "-");
 
       const ensureCourseDoc = async (id) => {
         const clean = String(id || "").trim();
@@ -110,6 +118,139 @@
           },
           { merge: true }
         );
+      };
+
+      const writeSetDocsInBatches = async (items) => {
+        const chunkSize = 400;
+        for (let i = 0; i < items.length; i += chunkSize) {
+          const batch = writeBatch(db);
+          const chunk = items.slice(i, i + chunkSize);
+          chunk.forEach(({ ref, data }) => batch.set(ref, data, { merge: true }));
+          await batch.commit();
+        }
+      };
+
+      const writeDeleteDocsInBatches = async (refs) => {
+        const chunkSize = 400;
+        for (let i = 0; i < refs.length; i += chunkSize) {
+          const batch = writeBatch(db);
+          const chunk = refs.slice(i, i + chunkSize);
+          chunk.forEach((ref) => batch.delete(ref));
+          await batch.commit();
+        }
+      };
+
+      const copyCourseCollectionPreserveIds = async (sourceCourseId, targetCourseId, subcollectionName) => {
+        const snap = await getDocs(collection(db, "courses", sourceCourseId, subcollectionName));
+        if (snap.empty) return 0;
+
+        const items = snap.docs.map((item) => ({
+          ref: doc(db, "courses", targetCourseId, subcollectionName, item.id),
+          data: item.data()
+        }));
+
+        await writeSetDocsInBatches(items);
+        return snap.size;
+      };
+
+      const deleteCourseCollectionDocs = async (targetCourseId, subcollectionName) => {
+        const snap = await getDocs(collection(db, "courses", targetCourseId, subcollectionName));
+        if (snap.empty) return 0;
+
+        const refs = snap.docs.map((item) => item.ref);
+        await writeDeleteDocsInBatches(refs);
+        return snap.size;
+      };
+
+      const courseHasAnyData = async (targetCourseId) => {
+        const subcollections = ["students", "assignments", "submissions"];
+        for (const subcollectionName of subcollections) {
+          const snap = await getDocs(collection(db, "courses", targetCourseId, subcollectionName));
+          if (!snap.empty) return true;
+        }
+        return false;
+      };
+
+      const deleteWholeCourseData = async (targetCourseId) => {
+        await deleteCourseCollectionDocs(targetCourseId, "submissions");
+        await deleteCourseCollectionDocs(targetCourseId, "assignments");
+        await deleteCourseCollectionDocs(targetCourseId, "students");
+        await deleteDoc(doc(db, "courses", targetCourseId));
+      };
+
+      const handleRenameCourseKeepData = async () => {
+        if (!courseId) {
+          alert("Bạn hãy mở đúng khóa trước khi đổi tên.");
+          return;
+        }
+
+        const clean = slugifyCourseId(renameCourseInput);
+
+        if (!clean) {
+          alert("Tên khóa mới chưa hợp lệ. Bạn hãy dùng chữ không dấu, số hoặc dấu gạch ngang.");
+          return;
+        }
+
+        if (clean.includes("/")) {
+          alert("Tên khóa không được chứa dấu /");
+          return;
+        }
+
+        if (clean === courseId) {
+          alert("Tên khóa mới đang trùng với khóa hiện tại.");
+          return;
+        }
+
+        try {
+          setIsRenamingCourse(true);
+
+          const targetExists = courseOptions.some((item) => item === clean);
+          if (targetExists) {
+            const targetHasData = await courseHasAnyData(clean);
+            if (targetHasData) {
+              alert(`Khóa đích "${clean}" đã tồn tại và đã có dữ liệu. Bạn hãy chọn tên khác để tránh chồng dữ liệu.`);
+              return;
+            }
+          }
+
+          const ok = window.confirm(
+            `Đổi tên khóa từ "${courseId}" sang "${clean}"?\n\nDữ liệu học viên, bài tập và bài nộp sẽ được sao chép sang khóa mới.`
+          );
+          if (!ok) return;
+
+          await ensureCourseDoc(clean);
+          await copyCourseCollectionPreserveIds(courseId, clean, "students");
+          await copyCourseCollectionPreserveIds(courseId, clean, "assignments");
+          await copyCourseCollectionPreserveIds(courseId, clean, "submissions");
+
+          await setDoc(
+            doc(db, "courses", clean),
+            {
+              name: clean,
+              renamedFrom: courseId,
+              updatedAt: serverTimestamp()
+            },
+            { merge: true }
+          );
+
+          const oldCourseId = courseId;
+          await switchCourse(clean);
+
+          const shouldDeleteOld = window.confirm(
+            `Đã chuyển dữ liệu sang khóa mới "${clean}".\n\nBạn có muốn xóa khóa cũ "${oldCourseId}" không?\n\nChỉ bấm OK khi bạn đã kiểm tra khóa mới hoạt động đúng.`
+          );
+
+          if (shouldDeleteOld) {
+            await deleteWholeCourseData(oldCourseId);
+          }
+
+          alert(`Đã đổi tên khóa sang "${clean}".`);
+        } catch (e) {
+          console.error(e);
+          alert("Không thể đổi tên khóa. Vui lòng thử lại.");
+        } finally {
+          setIsRenamingCourse(false);
+        }
       };
 
       const switchCourse = async (targetCourseId) => {
@@ -271,6 +412,10 @@
       }, [courseId]);
 
       useEffect(() => {
+        setRenameCourseInput(slugifyCourseId(courseId));
+      }, [courseId]);
+
+      useEffect(() => {
         if (!user || !courseId) {
           setStudents([]);
           setAssignments([]);
@@ -313,24 +458,9 @@
         return toMillis(a?.deadlineAt);
       };
 
-      // Ngày dùng để xét deadline là ngày nộp lần đầu.
-      // Với dữ liệu cũ chưa có submittedAt, tạm dùng timestamp cũ để không làm hỏng dữ liệu hiện tại.
-      const getSubmissionSubmitMillis = (sub) => {
-        return toMillis(sub?.submittedAt) || toMillis(sub?.timestamp);
-      };
-
-      const toDateInputValue = (millis) => {
-        if (!millis) return "";
-        const d = new Date(millis);
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, "0");
-        const day = String(d.getDate()).padStart(2, "0");
-        return `${y}-${m}-${day}`;
-      };
-
       const isLateSubmission = (sub) => {
         const dl = getDeadlineMillis(sub.assignmentId);
-        const sm = getSubmissionSubmitMillis(sub);
+        const sm = toMillis(sub?.timestamp);
         if (!dl || !sm) return false;
         return sm > dl;
       };
@@ -367,48 +497,6 @@
           !submissions.some(s => s.studentId === stu.id && s.assignmentId === missingAssignId)
         );
       }, [students, submissions, missingAssignId]);
-
-      const selectedAdjustSubmission = useMemo(() => {
-        if (!adjustSubmitStudentId || !adjustSubmitAssignId) return null;
-        return submissions.find(s =>
-          s.studentId === adjustSubmitStudentId && s.assignmentId === adjustSubmitAssignId
-        ) || null;
-      }, [submissions, adjustSubmitStudentId, adjustSubmitAssignId]);
-
-      useEffect(() => {
-        const millis = getSubmissionSubmitMillis(selectedAdjustSubmission);
-        setAdjustSubmitDate(millis ? toDateInputValue(millis) : "");
-      }, [selectedAdjustSubmission?.id]);
-
-      const saveAdjustedSubmissionDate = async () => {
-        if (!selectedAdjustSubmission) {
-          alert("Chưa tìm thấy bài nộp của học viên cho bài tập này.");
-          return;
-        }
-
-        if (!adjustSubmitDate) {
-          alert("Vui lòng chọn lại ngày nộp.");
-          return;
-        }
-
-        try {
-          const submitDate = new Date(`${adjustSubmitDate}T12:00:00`);
-          if (isNaN(submitDate.getTime())) {
-            alert("Ngày nộp không hợp lệ.");
-            return;
-          }
-
-          await updateDoc(doc(db, "courses", courseId, "submissions", selectedAdjustSubmission.id), {
-            submittedAt: Timestamp.fromDate(submitDate),
-            manuallyAdjustedAt: serverTimestamp()
-          });
-
-          alert("Đã sửa ngày nộp cho học viên này!");
-        } catch (e) {
-          console.error(e);
-          alert("Không thể sửa ngày nộp.");
-        }
-      };
 
       const handleAdminLogin = async (e) => {
         e.preventDefault();
@@ -585,7 +673,7 @@
           if (editingSubId) {
             await updateDoc(doc(db, "courses", courseId, "submissions", editingSubId), {
               link: linkInput,
-              updatedAt: serverTimestamp()
+              timestamp: serverTimestamp()
             });
             setEditingSubId(null);
             alert("Cập nhật bài nộp thành công!");
@@ -593,7 +681,7 @@
             if (confirm("Bạn đã nộp bài này rồi. Cập nhật link mới?")) {
               await updateDoc(doc(db, "courses", courseId, "submissions", existingSub.id), {
                 link: linkInput,
-                updatedAt: serverTimestamp()
+                timestamp: serverTimestamp()
               });
               alert("Cập nhật thành công!");
             }
@@ -602,9 +690,7 @@
               studentId: selectedStudentId,
               assignmentId: selectedAssignId,
               link: linkInput,
-              submittedAt: serverTimestamp(),
-              timestamp: serverTimestamp(),
-              updatedAt: serverTimestamp()
+              timestamp: serverTimestamp()
             });
             alert("Nộp bài thành công!");
           }
@@ -848,14 +934,9 @@
                                   </a>
                                 </td>
                                 <td className="p-3 text-sm text-gray-500">
-                                  {getSubmissionSubmitMillis(sub)
-                                    ? new Date(getSubmissionSubmitMillis(sub)).toLocaleString("vi-VN")
+                                  {sub.timestamp?.seconds
+                                    ? new Date(sub.timestamp.seconds * 1000).toLocaleString("vi-VN")
                                     : "Vừa xong"}
-                                  {sub.updatedAt?.seconds && (
-                                    <div className="text-xs text-gray-400 mt-1">
-                                      Cập nhật: {new Date(sub.updatedAt.seconds * 1000).toLocaleString("vi-VN")}
-                                    </div>
-                                  )}
                                 </td>
                                 <td className="p-3 text-right space-x-2">
                                   <button
@@ -953,6 +1034,49 @@
                           Tạo / Mở khóa
                         </button>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="border rounded-lg p-4 bg-amber-50 mt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Đổi tên khóa hiện tại và giữ nguyên dữ liệu
+                    </label>
+
+                    <div className="flex flex-col lg:flex-row gap-2">
+                      <input
+                        value={renameCourseInput}
+                        onChange={(e) => setRenameCourseInput(e.target.value)}
+                        placeholder="vd: procreate-thang-4"
+                        className="flex-1 border p-2 rounded outline-none focus:ring-2 focus:ring-amber-500 bg-white"
+                      />
+
+                      <button
+                        onClick={() => setRenameCourseInput(slugifyCourseId(courseId))}
+                        disabled={!courseId || isRenamingCourse}
+                        className={`px-4 py-2 rounded transition ${
+                          !courseId || isRenamingCourse
+                            ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                            : "bg-amber-100 text-amber-800 hover:bg-amber-200"
+                        }`}
+                      >
+                        Gợi ý tên không dấu
+                      </button>
+
+                      <button
+                        onClick={handleRenameCourseKeepData}
+                        disabled={!courseId || isRenamingCourse}
+                        className={`px-4 py-2 rounded text-white transition ${
+                          !courseId || isRenamingCourse
+                            ? "bg-gray-300 cursor-not-allowed"
+                            : "bg-amber-600 hover:bg-amber-700"
+                        }`}
+                      >
+                        {isRenamingCourse ? "Đang chuyển dữ liệu..." : "Đổi tên khóa"}
+                      </button>
+                    </div>
+
+                    <div className="text-xs text-gray-600 mt-2">
+                      Hệ thống sẽ tạo khóa mới, sao chép danh sách học viên, bài tập và bài nộp sang tên mới. Sau đó bạn có thể chọn xóa khóa cũ.
                     </div>
                   </div>
 
@@ -1075,67 +1199,6 @@
                       </div>
                     </div>
 
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
-                      <div className="font-semibold text-amber-900 mb-2">Sửa riêng ngày nộp cho học viên</div>
-                      <div className="text-sm text-amber-800 mb-3">
-                        Dùng khi học viên đã nộp đúng hạn nhưng sau đó sửa link làm dữ liệu cũ bị báo trễ. Ngày này sẽ được dùng để xét deadline thay cho thời gian cập nhật link.
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                        <select
-                          value={adjustSubmitStudentId}
-                          onChange={(e) => setAdjustSubmitStudentId(e.target.value)}
-                          className="border rounded p-2 bg-white"
-                        >
-                          <option value="">-- Chọn học viên --</option>
-                          {students.map(s => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                          ))}
-                        </select>
-
-                        <select
-                          value={adjustSubmitAssignId}
-                          onChange={(e) => setAdjustSubmitAssignId(e.target.value)}
-                          className="border rounded p-2 bg-white"
-                        >
-                          <option value="">-- Chọn bài tập --</option>
-                          {assignments.map(a => (
-                            <option key={a.id} value={a.id}>{a.title}</option>
-                          ))}
-                        </select>
-
-                        <input
-                          type="date"
-                          value={adjustSubmitDate}
-                          onChange={(e) => setAdjustSubmitDate(e.target.value)}
-                          className="border rounded p-2 bg-white"
-                        />
-
-                        <button
-                          onClick={saveAdjustedSubmissionDate}
-                          className="bg-amber-600 text-white px-4 py-2 rounded hover:bg-amber-700 transition"
-                        >
-                          Lưu ngày nộp
-                        </button>
-                      </div>
-
-                      {adjustSubmitStudentId && adjustSubmitAssignId && (
-                        <div className="text-sm mt-3">
-                          {selectedAdjustSubmission ? (
-                            <div className="text-gray-700">
-                              Đã tìm thấy bài nộp. Trạng thái hiện tại: {isLateSubmission(selectedAdjustSubmission) ? (
-                                <span className="font-semibold text-red-600">Trễ hạn</span>
-                              ) : (
-                                <span className="font-semibold text-green-600">Đúng hạn</span>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="text-red-600 font-medium">Chưa tìm thấy bài nộp của học viên này cho bài tập đã chọn.</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
                     <div className="overflow-x-auto border rounded-lg">
                       <table className="w-full text-center border-collapse text-sm">
                         <thead>
@@ -1159,20 +1222,15 @@
                                 return (
                                   <td key={assign.id} className="p-3 border-b">
                                     {sub ? (
-                                      <div className="flex flex-col items-center gap-1">
-                                        <a
-                                          href={sub.link}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className={`inline-block font-bold text-lg hover:scale-125 transition transform ${isLateSubmission(sub) ? "text-red-600" : "text-green-600"}`}
-                                          title={isLateSubmission(sub) ? "Đã nộp nhưng trễ hạn" : "Đã nộp đúng hạn"}
-                                        >
-                                          ✓
-                                        </a>
-                                        {isLateSubmission(sub) && (
-                                          <span className="text-[10px] text-red-600 font-semibold">Trễ</span>
-                                        )}
-                                      </div>
+                                      <a
+                                        href={sub.link}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-block text-green-600 font-bold text-lg hover:scale-125 transition transform"
+                                        title="Đã nộp"
+                                      >
+                                        ✓
+                                      </a>
                                     ) : isOverdueMissing(stu.id, assign.id) ? (
                                       <span className="text-red-600 font-semibold">Quá hạn</span>
                                     ) : (
@@ -1204,7 +1262,6 @@
                         onChange={(e) => setNewStudentName(e.target.value)}
                         placeholder={editingStudentId ? "Sửa tên học viên..." : "Nhập tên học viên mới..."}
                         className="flex-1 border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                        onKeyDown={(e) => { if (e.key === "Enter") saveStudent(); }}
                       />
                       <button onClick={saveStudent} className={`text-white px-4 py-2 rounded transition flex items-center justify-center gap-1 ${editingStudentId ? "bg-orange-500 hover:bg-orange-600" : "bg-blue-600 hover:bg-blue-700"}`}>
                         {editingStudentId ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
@@ -1244,7 +1301,6 @@
                         onChange={(e) => setNewAssignName(e.target.value)}
                         placeholder={editingAssignId ? "Sửa tên bài tập..." : "VD: Bài tập 1..."}
                         className="flex-1 border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                        onKeyDown={(e) => { if (e.key === "Enter") saveAssignment(); }}
                       />
 
                       <input
