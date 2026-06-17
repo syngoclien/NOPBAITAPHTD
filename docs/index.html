@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Cổng Nộp Bài HTD - Fixed</title>
+  <title>Cổng Nộp Bài HTD</title>
 
   <script src="https://cdn.tailwindcss.com"></script>
 
@@ -17,16 +16,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
-  <!-- Babel chỉ dùng để biên dịch JSX -->
-  <!-- Giúp Babel xử lý JSX runtime khi chạy trực tiếp trên GitHub Pages -->
-  <script type="importmap">
-  {
-    "imports": {
-      "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime"
-    }
-  }
-  </script>
-
+  <!-- Babel chỉ dùng để biên dịch JSX, KHÔNG dùng importmap hay data-type=module -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <!-- Hiện lỗi rõ trên màn hình thay vì trang trắng -->
@@ -54,7 +44,8 @@
 <body class="bg-gray-100">
   <div id="root"></div>
 
-  <script type="text/babel" data-presets="env,react" data-type="module">
+  <!-- Chỉ dùng data-presets="react" — không cần env, không cần data-type=module -->
+  <script type="text/babel" data-presets="react">
     const { useState, useEffect, useMemo } = React;
     const { createRoot } = ReactDOM;
 
@@ -191,13 +182,9 @@
       const ensureCourseDoc = async (id) => {
         const clean = String(id || "").trim();
         if (!clean) return;
-
         await setDoc(
           doc(db, "courses", clean),
-          {
-            name: clean,
-            updatedAt: serverTimestamp()
-          },
+          { name: clean, updatedAt: serverTimestamp() },
           { merge: true }
         );
       };
@@ -225,12 +212,10 @@
       const copyCourseCollectionPreserveIds = async (sourceCourseId, targetCourseId, subcollectionName) => {
         const snap = await getDocs(collection(db, "courses", sourceCourseId, subcollectionName));
         if (snap.empty) return 0;
-
         const items = snap.docs.map((item) => ({
           ref: doc(db, "courses", targetCourseId, subcollectionName, item.id),
           data: item.data()
         }));
-
         await writeSetDocsInBatches(items);
         return snap.size;
       };
@@ -238,7 +223,6 @@
       const deleteCourseCollectionDocs = async (targetCourseId, subcollectionName) => {
         const snap = await getDocs(collection(db, "courses", targetCourseId, subcollectionName));
         if (snap.empty) return 0;
-
         const refs = snap.docs.map((item) => item.ref);
         await writeDeleteDocsInBatches(refs);
         return snap.size;
@@ -265,27 +249,21 @@
           alert("Bạn hãy mở đúng khóa trước khi đổi tên.");
           return;
         }
-
         const clean = slugifyCourseId(renameCourseInput);
-
         if (!clean) {
           alert("Tên khóa mới chưa hợp lệ. Bạn hãy dùng chữ không dấu, số hoặc dấu gạch ngang.");
           return;
         }
-
         if (clean.includes("/")) {
           alert("Tên khóa không được chứa dấu /");
           return;
         }
-
         if (clean === courseId) {
           alert("Tên khóa mới đang trùng với khóa hiện tại.");
           return;
         }
-
         try {
           setIsRenamingCourse(true);
-
           const targetExists = courseOptions.some((item) => item === clean);
           if (targetExists) {
             const targetHasData = await courseHasAnyData(clean);
@@ -294,38 +272,27 @@
               return;
             }
           }
-
           const ok = window.confirm(
             `Đổi tên khóa từ "${courseId}" sang "${clean}"?\n\nDữ liệu học viên, bài tập và bài nộp sẽ được sao chép sang khóa mới.`
           );
           if (!ok) return;
-
           await ensureCourseDoc(clean);
           await copyCourseCollectionPreserveIds(courseId, clean, "students");
           await copyCourseCollectionPreserveIds(courseId, clean, "assignments");
           await copyCourseCollectionPreserveIds(courseId, clean, "submissions");
-
           await setDoc(
             doc(db, "courses", clean),
-            {
-              name: clean,
-              renamedFrom: courseId,
-              updatedAt: serverTimestamp()
-            },
+            { name: clean, renamedFrom: courseId, updatedAt: serverTimestamp() },
             { merge: true }
           );
-
           const oldCourseId = courseId;
           await switchCourse(clean);
-
           const shouldDeleteOld = window.confirm(
             `Đã chuyển dữ liệu sang khóa mới "${clean}".\n\nBạn có muốn xóa khóa cũ "${oldCourseId}" không?\n\nChỉ bấm OK khi bạn đã kiểm tra khóa mới hoạt động đúng.`
           );
-
           if (shouldDeleteOld) {
             await deleteWholeCourseData(oldCourseId);
           }
-
           alert(`Đã đổi tên khóa sang "${clean}".`);
         } catch (e) {
           console.error(e);
@@ -337,29 +304,17 @@
 
       const switchCourse = async (targetCourseId) => {
         const clean = String(targetCourseId || "").trim();
-
-        if (!clean) {
-          alert("Tên khóa không được để trống.");
-          return;
-        }
-
-        if (clean.includes("/")) {
-          alert("Tên khóa không được chứa dấu /");
-          return;
-        }
-
+        if (!clean) { alert("Tên khóa không được để trống."); return; }
+        if (clean.includes("/")) { alert("Tên khóa không được chứa dấu /"); return; }
         await ensureCourseDoc(clean);
-
         localStorage.setItem("COURSE_ID", clean);
         setCourseId(clean);
         setSelectedExistingCourse(clean);
         setNewCourseInput("");
         setCourseSearch("");
-
         const url = new URL(window.location.href);
         url.searchParams.set("course", clean);
         window.history.replaceState({}, "", url.toString());
-
         setSelectedStudentId("");
         setSelectedAssignId("");
         setLinkInput("");
@@ -367,39 +322,23 @@
       };
 
       const handleSwitchExistingCourse = async () => {
-        if (!selectedExistingCourse) {
-          alert("Vui lòng chọn khóa.");
-          return;
-        }
-
-        try {
-          await switchCourse(selectedExistingCourse);
-        } catch (e) {
-          console.error(e);
-          alert("Không thể đổi khóa.");
-        }
+        if (!selectedExistingCourse) { alert("Vui lòng chọn khóa."); return; }
+        try { await switchCourse(selectedExistingCourse); }
+        catch (e) { console.error(e); alert("Không thể đổi khóa."); }
       };
 
       const handleCreateOrOpenNewCourse = async () => {
         const raw = String(newCourseInput || "").trim();
-
-        if (!raw) {
-          alert("Vui lòng nhập tên khóa mới.");
-          return;
-        }
-
+        if (!raw) { alert("Vui lòng nhập tên khóa mới."); return; }
         const existed = courseOptions.find(
           (item) => normalizeCourseId(item) === normalizeCourseId(raw)
         );
-
         const clean = existed || raw;
-
         try {
           if (!existed) {
             const ok = window.confirm(`Khóa "${clean}" chưa có. Tạo khóa mới?`);
             if (!ok) return;
           }
-
           await switchCourse(clean);
         } catch (e) {
           console.error(e);
@@ -410,10 +349,7 @@
       const filteredCourseOptions = useMemo(() => {
         const keyword = normalizeCourseId(courseSearch);
         if (!keyword) return courseOptions;
-
-        return courseOptions.filter((course) =>
-          normalizeCourseId(course).includes(keyword)
-        );
+        return courseOptions.filter((course) => normalizeCourseId(course).includes(keyword));
       }, [courseOptions, courseSearch]);
 
       const getStudentCourseLink = () => {
@@ -423,12 +359,7 @@
 
       const handleCopyStudentLink = async () => {
         const link = getStudentCourseLink();
-
-        if (!link) {
-          alert("Chưa có khóa để sao chép link.");
-          return;
-        }
-
+        if (!link) { alert("Chưa có khóa để sao chép link."); return; }
         try {
           if (navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(link);
@@ -440,7 +371,6 @@
             document.execCommand("copy");
             temp.remove();
           }
-
           setCopyLinkStatus("Đã sao chép link");
           setTimeout(() => setCopyLinkStatus(""), 2000);
         } catch (e) {
@@ -462,7 +392,6 @@
       useEffect(() => {
         const urlCourse = getCourseFromURL();
         const savedCourse = localStorage.getItem("COURSE_ID");
-
         if (!urlCourse && savedCourse) {
           const url = new URL(window.location.href);
           url.searchParams.set("course", savedCourse);
@@ -474,23 +403,16 @@
         const unsubCourses = onSnapshot(
           collection(db, "courses"),
           (snap) => {
-            const list = snap.docs
-              .map((d) => d.id)
-              .filter(Boolean)
-              .sort((a, b) => a.localeCompare(b, "vi"));
-
+            const list = snap.docs.map((d) => d.id).filter(Boolean).sort((a, b) => a.localeCompare(b, "vi"));
             setCourseOptions(list);
           },
           (err) => console.error("Lỗi tải danh sách khóa:", err)
         );
-
         return () => unsubCourses();
       }, []);
 
       useEffect(() => {
-        if (courseId) {
-          setSelectedExistingCourse(courseId);
-        }
+        if (courseId) setSelectedExistingCourse(courseId);
       }, [courseId]);
 
       useEffect(() => {
@@ -504,34 +426,25 @@
           setSubmissions([]);
           return;
         }
-
         const unsubStudents = onSnapshot(
           query(colStudents(), orderBy("name")),
           (snap) => setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
           (err) => console.error(err)
         );
-
         const unsubAssignments = onSnapshot(
           query(colAssignments(), orderBy("createdAt")),
           (snap) => setAssignments(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
           (err) => console.error(err)
         );
-
         const unsubSubmissions = onSnapshot(
           query(colSubmissions(), orderBy("timestamp", "desc")),
           (snap) => setSubmissions(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
           (err) => console.error(err)
         );
-
-        return () => {
-          unsubStudents();
-          unsubAssignments();
-          unsubSubmissions();
-        };
+        return () => { unsubStudents(); unsubAssignments(); unsubSubmissions(); };
       }, [user, courseId]);
 
       const toMillis = (ts) => (ts?.seconds ? ts.seconds * 1000 : null);
-
       const getStudentName = (id) => students.find(s => s.id === id)?.name || "Unknown";
       const getAssignName = (id) => assignments.find(a => a.id === id)?.title || "Unknown";
 
@@ -601,19 +514,12 @@
         if (!newStudentName.trim()) return;
         try {
           await ensureCourseDoc(courseId);
-
           if (editingStudentId) {
-            await updateDoc(doc(db, "courses", courseId, "students", editingStudentId), {
-              name: newStudentName.trim()
-            });
+            await updateDoc(doc(db, "courses", courseId, "students", editingStudentId), { name: newStudentName.trim() });
             alert("Đã cập nhật học viên!");
           } else {
-            await addDoc(colStudents(), {
-              name: newStudentName.trim(),
-              createdAt: serverTimestamp()
-            });
+            await addDoc(colStudents(), { name: newStudentName.trim(), createdAt: serverTimestamp() });
           }
-
           setNewStudentName("");
           setEditingStudentId(null);
         } catch (e) {
@@ -628,35 +534,23 @@
         window.scrollTo({ top: 0, behavior: "smooth" });
       };
 
-      const cancelEditStudent = () => {
-        setEditingStudentId(null);
-        setNewStudentName("");
-      };
+      const cancelEditStudent = () => { setEditingStudentId(null); setNewStudentName(""); };
 
       const deleteStudent = async (id) => {
         if (!confirm("Xóa học viên này?")) return;
-        try {
-          await deleteDoc(doc(db, "courses", courseId, "students", id));
-        } catch (e) {
-          console.error(e);
-          alert("Lỗi xóa học viên");
-        }
+        try { await deleteDoc(doc(db, "courses", courseId, "students", id)); }
+        catch (e) { console.error(e); alert("Lỗi xóa học viên"); }
       };
 
       const saveAssignment = async () => {
         if (!newAssignName.trim()) return;
-
         try {
           await ensureCourseDoc(courseId);
-
           let deadlineAt = null;
           if (newAssignDeadlineDate) {
             const endOfDay = new Date(`${newAssignDeadlineDate}T23:59:59`);
-            if (!isNaN(endOfDay.getTime())) {
-              deadlineAt = Timestamp.fromDate(endOfDay);
-            }
+            if (!isNaN(endOfDay.getTime())) deadlineAt = Timestamp.fromDate(endOfDay);
           }
-
           if (editingAssignId) {
             await updateDoc(doc(db, "courses", courseId, "assignments", editingAssignId), {
               title: newAssignName.trim(),
@@ -670,7 +564,6 @@
               deadlineAt
             });
           }
-
           setNewAssignName("");
           setNewAssignDeadlineDate("");
           setEditingAssignId(null);
@@ -691,25 +584,16 @@
         window.scrollTo({ top: 0, behavior: "smooth" });
       };
 
-      const cancelEditAssignment = () => {
-        setEditingAssignId(null);
-        setNewAssignName("");
-        setNewAssignDeadlineDate("");
-      };
+      const cancelEditAssignment = () => { setEditingAssignId(null); setNewAssignName(""); setNewAssignDeadlineDate(""); };
 
       const deleteAssignment = async (id) => {
         if (!confirm("Xóa bài tập này?")) return;
-        try {
-          await deleteDoc(doc(db, "courses", courseId, "assignments", id));
-        } catch (e) {
-          console.error(e);
-          alert("Lỗi xóa bài tập");
-        }
+        try { await deleteDoc(doc(db, "courses", courseId, "assignments", id)); }
+        catch (e) { console.error(e); alert("Lỗi xóa bài tập"); }
       };
 
       const exportToCSV = () => {
         const headers = ["Họ và Tên", ...assignments.map(a => a.title)];
-
         const rows = students.map(stu => {
           const rowData = [stu.name];
           assignments.forEach(assign => {
@@ -718,11 +602,9 @@
           });
           return rowData.map(cell => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(",");
         });
-
         const csvContent = "\uFEFF" + headers.map(h => `"${h.replaceAll('"', '""')}"`).join(",") + "\n" + rows.join("\n");
         const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
-
         const a = document.createElement("a");
         a.href = url;
         a.download = `Bao_cao_nop_bai_${new Date().toISOString().slice(0,10)}.csv`;
@@ -734,24 +616,11 @@
 
       const handleSubmitWork = async (e) => {
         e.preventDefault();
-
-        if (!courseId) {
-          alert("Link này chưa có mã khóa. Vui lòng dùng đúng link học viên do admin gửi.");
-          return;
-        }
-
-        if (!selectedStudentId || !selectedAssignId || !linkInput) {
-          alert("Vui lòng chọn đầy đủ thông tin và dán link!");
-          return;
-        }
-
-        const existingSub = submissions.find(s =>
-          s.studentId === selectedStudentId && s.assignmentId === selectedAssignId
-        );
-
+        if (!courseId) { alert("Link này chưa có mã khóa. Vui lòng dùng đúng link học viên do admin gửi."); return; }
+        if (!selectedStudentId || !selectedAssignId || !linkInput) { alert("Vui lòng chọn đầy đủ thông tin và dán link!"); return; }
+        const existingSub = submissions.find(s => s.studentId === selectedStudentId && s.assignmentId === selectedAssignId);
         try {
           await ensureCourseDoc(courseId);
-
           if (editingSubId) {
             await updateDoc(doc(db, "courses", courseId, "submissions", editingSubId), {
               link: linkInput,
@@ -785,12 +654,8 @@
 
       const handleDeleteSubmission = async (subId) => {
         if (!confirm("Bạn chắc chắn muốn xóa bài nộp này?")) return;
-        try {
-          await deleteDoc(doc(db, "courses", courseId, "submissions", subId));
-        } catch (e) {
-          console.error(e);
-          alert("Lỗi xóa bài nộp");
-        }
+        try { await deleteDoc(doc(db, "courses", courseId, "submissions", subId)); }
+        catch (e) { console.error(e); alert("Lỗi xóa bài nộp"); }
       };
 
       const handleEditRequest = (sub) => {
@@ -821,7 +686,6 @@
                   <div className="text-xs opacity-90">Khóa: {courseId || "Chưa chọn"}</div>
                 )}
               </div>
-
               <div className="flex gap-2">
                 {view !== "home" && (
                   <button
@@ -845,7 +709,6 @@
                   <User className="w-16 h-16 text-green-500" />
                   <span className="text-xl font-semibold text-gray-700">Tôi là Học Viên</span>
                 </div>
-
                 <div
                   onClick={() => setView("admin-login")}
                   className="w-full md:w-64 h-48 bg-white rounded-xl shadow-lg hover:shadow-xl cursor-pointer flex flex-col items-center justify-center gap-4 transition transform hover:-translate-y-1 border border-gray-200"
@@ -884,17 +747,14 @@
                     <Edit2 className="w-5 h-5 text-green-600" />
                     Nộp bài tập
                   </h2>
-
                   <div className="text-sm text-gray-500 mb-4">
                     {courseId ? `Khóa hiện tại: ${courseId}` : "Chưa xác định khóa học"}
                   </div>
-
                   {!courseId && (
                     <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-800">
                       Link này chưa có mã khóa nên hệ thống không biết hiển thị danh sách học viên nào. Vui lòng mở đúng link học viên do admin gửi, có dạng <span className="font-semibold">?course=ten-khoa</span>.
                     </div>
                   )}
-
                   <form onSubmit={handleSubmitWork} className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">1. Tên của bạn</label>
@@ -916,7 +776,6 @@
                         ))}
                       </select>
                     </div>
-
                     {selectedStudentId && (
                       <>
                         <div>
@@ -937,7 +796,6 @@
                             ))}
                           </select>
                         </div>
-
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">3. Link bài nộp</label>
                           <input
@@ -950,7 +808,6 @@
                             disabled={!courseId}
                           />
                         </div>
-
                         <button
                           type="submit"
                           disabled={!courseId}
@@ -960,7 +817,6 @@
                         >
                           {editingSubId ? "Cập nhật bài nộp" : "Gửi bài nộp"}
                         </button>
-
                         {editingSubId && (
                           <button
                             type="button"
@@ -980,7 +836,6 @@
                     <h3 className="text-lg font-bold mb-4 text-gray-700">
                       Lịch sử nộp bài của: {getStudentName(selectedStudentId)}
                     </h3>
-
                     {mySubmissions.length === 0 ? (
                       <p className="text-gray-500 italic">Chưa có bài nộp nào.</p>
                     ) : (
@@ -1000,9 +855,7 @@
                                 <td className="p-3 font-medium text-gray-800">
                                   {getAssignName(sub.assignmentId)}
                                   {isLateSubmission(sub) && (
-                                    <span className="ml-2 inline-block text-xs font-semibold px-2 py-1 rounded bg-red-100 text-red-700">
-                                      TRỄ HẠN
-                                    </span>
+                                    <span className="ml-2 inline-block text-xs font-semibold px-2 py-1 rounded bg-red-100 text-red-700">TRỄ HẠN</span>
                                   )}
                                 </td>
                                 <td className="p-3">
@@ -1021,18 +874,8 @@
                                     : "Vừa xong"}
                                 </td>
                                 <td className="p-3 text-right space-x-2">
-                                  <button
-                                    onClick={() => handleEditRequest(sub)}
-                                    className="text-orange-500 hover:text-orange-700 text-sm font-medium"
-                                  >
-                                    Sửa
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteSubmission(sub.id)}
-                                    className="text-red-500 hover:text-red-700 text-sm font-medium"
-                                  >
-                                    Xóa
-                                  </button>
+                                  <button onClick={() => handleEditRequest(sub)} className="text-orange-500 hover:text-orange-700 text-sm font-medium">Sửa</button>
+                                  <button onClick={() => handleDeleteSubmission(sub.id)} className="text-red-500 hover:text-red-700 text-sm font-medium">Xóa</button>
                                 </td>
                               </tr>
                             ))}
@@ -1053,13 +896,9 @@
                       <div className="text-sm text-gray-600">Đang quản trị khóa</div>
                       <div className="text-lg font-bold text-gray-800">{courseId || "Chưa chọn khóa"}</div>
                     </div>
-
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="border rounded-lg p-4 bg-gray-50">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Chọn khóa đã có
-                        </label>
-
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Chọn khóa đã có</label>
                         <div className="relative mb-3">
                           <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
                           <input
@@ -1069,7 +908,6 @@
                             className="w-full border p-2 pl-9 rounded outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                           />
                         </div>
-
                         <select
                           value={selectedExistingCourse}
                           onChange={(e) => setSelectedExistingCourse(e.target.value)}
@@ -1080,17 +918,13 @@
                             <option value="">Không có khóa phù hợp</option>
                           ) : (
                             filteredCourseOptions.map((course) => (
-                              <option key={course} value={course}>
-                                {course}
-                              </option>
+                              <option key={course} value={course}>{course}</option>
                             ))
                           )}
                         </select>
-
                         <div className="mt-2 text-xs text-gray-500">
                           {filteredCourseOptions.length} khóa hiển thị / {courseOptions.length} khóa
                         </div>
-
                         <button
                           onClick={handleSwitchExistingCourse}
                           className="mt-3 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition w-full md:w-auto"
@@ -1098,11 +932,8 @@
                           Mở khóa đã chọn
                         </button>
                       </div>
-
                       <div className="border rounded-lg p-4 bg-gray-50">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Hoặc tạo khóa mới
-                        </label>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Hoặc tạo khóa mới</label>
                         <input
                           value={newCourseInput}
                           onChange={(e) => setNewCourseInput(e.target.value)}
@@ -1120,10 +951,7 @@
                   </div>
 
                   <div className="border rounded-lg p-4 bg-amber-50 mt-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Đổi tên khóa hiện tại và giữ nguyên dữ liệu
-                    </label>
-
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Đổi tên khóa hiện tại và giữ nguyên dữ liệu</label>
                     <div className="flex flex-col lg:flex-row gap-2">
                       <input
                         value={renameCourseInput}
@@ -1131,98 +959,60 @@
                         placeholder="vd: procreate-thang-4"
                         className="flex-1 border p-2 rounded outline-none focus:ring-2 focus:ring-amber-500 bg-white"
                       />
-
                       <button
                         onClick={() => setRenameCourseInput(slugifyCourseId(courseId))}
                         disabled={!courseId || isRenamingCourse}
-                        className={`px-4 py-2 rounded transition ${
-                          !courseId || isRenamingCourse
-                            ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                            : "bg-amber-100 text-amber-800 hover:bg-amber-200"
-                        }`}
+                        className={`px-4 py-2 rounded transition ${!courseId || isRenamingCourse ? "bg-gray-200 text-gray-400 cursor-not-allowed" : "bg-amber-100 text-amber-800 hover:bg-amber-200"}`}
                       >
                         Gợi ý tên không dấu
                       </button>
-
                       <button
                         onClick={handleRenameCourseKeepData}
                         disabled={!courseId || isRenamingCourse}
-                        className={`px-4 py-2 rounded text-white transition ${
-                          !courseId || isRenamingCourse
-                            ? "bg-gray-300 cursor-not-allowed"
-                            : "bg-amber-600 hover:bg-amber-700"
-                        }`}
+                        className={`px-4 py-2 rounded text-white transition ${!courseId || isRenamingCourse ? "bg-gray-300 cursor-not-allowed" : "bg-amber-600 hover:bg-amber-700"}`}
                       >
                         {isRenamingCourse ? "Đang chuyển dữ liệu..." : "Đổi tên khóa"}
                       </button>
                     </div>
-
                     <div className="text-xs text-gray-600 mt-2">
                       Hệ thống sẽ tạo khóa mới, sao chép danh sách học viên, bài tập và bài nộp sang tên mới. Sau đó bạn có thể chọn xóa khóa cũ.
                     </div>
                   </div>
 
                   <div className="text-xs text-gray-500 mt-3">
-                    Gợi ý: dùng mã không dấu, không khoảng trắng. Ví dụ:
-                    <span className="font-semibold"> procreate-thang-4</span>
+                    Gợi ý: dùng mã không dấu, không khoảng trắng. Ví dụ: <span className="font-semibold">procreate-thang-4</span>
                   </div>
-
                   <div className="text-xs text-gray-500 mt-1">
                     Link học viên theo khóa:
                     <span className="font-semibold break-all">
-                      {courseId
-                        ? ` ${getStudentCourseLink()}`
-                        : " Chưa có link vì chưa chọn khóa"}
+                      {courseId ? ` ${getStudentCourseLink()}` : " Chưa có link vì chưa chọn khóa"}
                     </span>
                   </div>
-
                   <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2">
                     <button
                       onClick={handleCopyStudentLink}
                       disabled={!courseId}
-                      className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded transition w-full sm:w-auto ${
-                        courseId
-                          ? "bg-indigo-600 text-white hover:bg-indigo-700"
-                          : "bg-gray-200 text-gray-400 cursor-not-allowed"
-                      }`}
+                      className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded transition w-full sm:w-auto ${courseId ? "bg-indigo-600 text-white hover:bg-indigo-700" : "bg-gray-200 text-gray-400 cursor-not-allowed"}`}
                     >
                       <Copy className="w-4 h-4" />
                       Sao chép link học viên
                     </button>
-
                     {copyLinkStatus && (
-                      <span className="text-sm text-green-600 font-medium">
-                        {copyLinkStatus}
-                      </span>
+                      <span className="text-sm text-green-600 font-medium">{copyLinkStatus}</span>
                     )}
                   </div>
                 </div>
 
                 <div className="flex flex-wrap gap-2 border-b pb-2">
-                  <button
-                    onClick={() => setAdminTab("report")}
-                    className={`px-4 py-2 rounded-lg font-medium transition ${
-                      adminTab === "report" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    Báo cáo Tổng quan
-                  </button>
-                  <button
-                    onClick={() => setAdminTab("students")}
-                    className={`px-4 py-2 rounded-lg font-medium transition ${
-                      adminTab === "students" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    QL Học viên
-                  </button>
-                  <button
-                    onClick={() => setAdminTab("assignments")}
-                    className={`px-4 py-2 rounded-lg font-medium transition ${
-                      adminTab === "assignments" ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-100"
-                    }`}
-                  >
-                    QL Bài tập
-                  </button>
+                  {["report", "students", "assignments"].map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setAdminTab(tab)}
+                      className={`px-4 py-2 rounded-lg font-medium transition ${adminTab === tab ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-100"}`}
+                    >
+                      {tab === "report" ? "Báo cáo Tổng quan" : tab === "students" ? "QL Học viên" : "QL Bài tập"}
+                    </button>
+                  ))}
                 </div>
 
                 {adminTab === "report" && (
@@ -1236,19 +1026,14 @@
                         <FileSpreadsheet className="w-4 h-4" /> Xuất Excel
                       </button>
                     </div>
-
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
                       <div className="bg-gray-50 border rounded-lg p-4">
                         <div className="text-sm text-gray-600">Tỷ lệ nộp tổng quan</div>
                         <div className="text-2xl font-bold">{overallPercent}%</div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          {totalSubmitted}/{totalRequired} lượt nộp
-                        </div>
+                        <div className="text-xs text-gray-500 mt-1">{totalSubmitted}/{totalRequired} lượt nộp</div>
                       </div>
-
                       <div className="bg-gray-50 border rounded-lg p-4 md:col-span-2">
                         <div className="text-sm text-gray-600 mb-2">Ai chưa nộp theo bài</div>
-
                         <div className="flex flex-col md:flex-row gap-2">
                           <select
                             value={missingAssignId}
@@ -1260,13 +1045,10 @@
                               <option key={a.id} value={a.id}>{a.title}</option>
                             ))}
                           </select>
-
                           <div className="text-sm text-gray-700 flex-1">
                             {missingAssignId ? (
                               <>
-                                <div className="font-semibold mb-1">
-                                  Chưa nộp ({missingStudentsForSelectedAssignment.length})
-                                </div>
+                                <div className="font-semibold mb-1">Chưa nộp ({missingStudentsForSelectedAssignment.length})</div>
                                 <div className="max-h-24 overflow-auto text-gray-600">
                                   {missingStudentsForSelectedAssignment.length === 0
                                     ? "Tất cả đã nộp."
@@ -1280,14 +1062,11 @@
                         </div>
                       </div>
                     </div>
-
                     <div className="overflow-x-auto border rounded-lg">
                       <table className="w-full text-center border-collapse text-sm">
                         <thead>
                           <tr className="bg-gray-100 text-gray-700">
-                            <th className="p-3 border-r border-b min-w-[180px] text-left sticky left-0 bg-gray-100 z-10">
-                              HỌ TÊN HỌC VIÊN
-                            </th>
+                            <th className="p-3 border-r border-b min-w-[180px] text-left sticky left-0 bg-gray-100 z-10">HỌ TÊN HỌC VIÊN</th>
                             {assignments.map(a => (
                               <th key={a.id} className="p-3 border-b min-w-[120px] font-semibold">{a.title}</th>
                             ))}
@@ -1304,15 +1083,9 @@
                                 return (
                                   <td key={assign.id} className="p-3 border-b">
                                     {sub ? (
-                                      <a
-                                        href={sub.link}
-                                        target="_blank"
-                                        rel="noreferrer"
+                                      <a href={sub.link} target="_blank" rel="noreferrer"
                                         className="inline-block text-green-600 font-bold text-lg hover:scale-125 transition transform"
-                                        title="Đã nộp"
-                                      >
-                                        ✓
-                                      </a>
+                                        title="Đã nộp">✓</a>
                                     ) : isOverdueMissing(stu.id, assign.id) ? (
                                       <span className="text-red-600 font-semibold">Quá hạn</span>
                                     ) : (
@@ -1350,9 +1123,7 @@
                         {editingStudentId ? "Lưu sửa" : "Thêm"}
                       </button>
                       {editingStudentId && (
-                        <button onClick={cancelEditStudent} className="px-4 py-2 rounded border hover:bg-gray-50 transition">
-                          Hủy
-                        </button>
+                        <button onClick={cancelEditStudent} className="px-4 py-2 rounded border hover:bg-gray-50 transition">Hủy</button>
                       )}
                     </div>
                     <div className="grid gap-2 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
@@ -1360,9 +1131,7 @@
                         <div key={s.id} className="flex justify-between items-center gap-3 p-3 bg-gray-50 rounded border group hover:border-blue-300">
                           <span className="font-medium flex-1">{s.name}</span>
                           <div className="flex items-center gap-3 shrink-0">
-                            <button onClick={() => startEditStudent(s)} className="text-blue-500 hover:text-blue-700 transition text-sm font-medium">
-                              Sửa
-                            </button>
+                            <button onClick={() => startEditStudent(s)} className="text-blue-500 hover:text-blue-700 transition text-sm font-medium">Sửa</button>
                             <button onClick={() => deleteStudent(s.id)} className="text-gray-400 hover:text-red-500 transition">
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -1384,7 +1153,6 @@
                         placeholder={editingAssignId ? "Sửa tên bài tập..." : "VD: Bài tập 1..."}
                         className="flex-1 border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
                       />
-
                       <input
                         type="date"
                         value={newAssignDeadlineDate}
@@ -1392,7 +1160,6 @@
                         className="border p-2 rounded focus:ring-2 focus:ring-blue-500 outline-none"
                         title="Deadline theo ngày"
                       />
-
                       <button
                         onClick={saveAssignment}
                         className={`text-white px-4 py-2 rounded transition flex items-center justify-center gap-1 ${editingAssignId ? "bg-orange-500 hover:bg-orange-600" : "bg-blue-600 hover:bg-blue-700"}`}
@@ -1400,17 +1167,10 @@
                         {editingAssignId ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
                         {editingAssignId ? "Lưu sửa" : "Thêm"}
                       </button>
-
                       {editingAssignId && (
-                        <button
-                          onClick={cancelEditAssignment}
-                          className="px-4 py-2 rounded border hover:bg-gray-50 transition"
-                        >
-                          Hủy
-                        </button>
+                        <button onClick={cancelEditAssignment} className="px-4 py-2 rounded border hover:bg-gray-50 transition">Hủy</button>
                       )}
                     </div>
-
                     <ul className="space-y-2">
                       {assignments.map((a, idx) => (
                         <li key={a.id} className="flex justify-between items-center gap-3 p-3 bg-gray-50 rounded border">
@@ -1424,9 +1184,7 @@
                             )}
                           </span>
                           <div className="flex items-center gap-3 shrink-0">
-                            <button onClick={() => startEditAssignment(a)} className="text-blue-500 hover:text-blue-700 transition text-sm font-medium">
-                              Sửa
-                            </button>
+                            <button onClick={() => startEditAssignment(a)} className="text-blue-500 hover:text-blue-700 transition text-sm font-medium">Sửa</button>
                             <button onClick={() => deleteAssignment(a.id)} className="text-gray-400 hover:text-red-500 transition">
                               <Trash2 className="w-4 h-4" />
                             </button>
