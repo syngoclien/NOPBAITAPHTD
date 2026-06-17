@@ -7,6 +7,18 @@
 
   <script src="https://cdn.tailwindcss.com"></script>
 
+  <!-- React UMD -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+  <!-- Firebase compat -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+  <!-- Babel chỉ dùng để biên dịch JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
   <!-- Hiện lỗi rõ trên màn hình thay vì trang trắng -->
   <script>
     window.addEventListener("error", (e) => {
@@ -27,61 +39,70 @@
         "</pre>";
     });
   </script>
-
-  <!-- Babel chỉ dùng để biên dịch JSX, không dùng để import module -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-  <!-- Nạp thư viện bằng ES module, sau đó đưa vào window.__deps cho Babel dùng -->
-  <script type="module">
-    import React, { useState, useEffect, useMemo } from "https://esm.sh/react@18.2.0";
-    import { createRoot } from "https://esm.sh/react-dom@18.2.0/client";
-
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import {
-      getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
-      onSnapshot, query, orderBy, serverTimestamp, Timestamp, setDoc,
-      getDocs, writeBatch
-    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-    import {
-      getAuth, signInAnonymously, onAuthStateChanged
-    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-
-    import {
-      User, Shield, Plus, Trash2, FileSpreadsheet,
-      ExternalLink, Edit2, CheckCircle, Search, Copy
-    } from "https://esm.sh/lucide-react@0.344.0";
-
-    window.__deps = {
-      React, useState, useEffect, useMemo,
-      createRoot,
-      initializeApp,
-      getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
-      onSnapshot, query, orderBy, serverTimestamp, Timestamp, setDoc,
-      getDocs, writeBatch,
-      getAuth, signInAnonymously, onAuthStateChanged,
-      User, Shield, Plus, Trash2, FileSpreadsheet,
-      ExternalLink, Edit2, CheckCircle, Search, Copy
-    };
-
-    window.dispatchEvent(new Event("deps-ready"));
-  </script>
 </head>
 
 <body class="bg-gray-100">
   <div id="root"></div>
 
   <script type="text/babel" data-presets="react">
-    const {
-      React, useState, useEffect, useMemo,
-      createRoot,
-      initializeApp,
-      getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
-      onSnapshot, query, orderBy, serverTimestamp, Timestamp, setDoc,
-      getDocs, writeBatch,
-      getAuth, signInAnonymously, onAuthStateChanged,
-      User, Shield, Plus, Trash2, FileSpreadsheet,
-      ExternalLink, Edit2, CheckCircle, Search, Copy
-    } = window.__deps;
+    const { useState, useEffect, useMemo } = React;
+    const { createRoot } = ReactDOM;
+
+    const Icon = ({ children, className = "" }) => (
+      <span className={className} aria-hidden="true">{children}</span>
+    );
+
+    const User = (p) => <Icon {...p}>👤</Icon>;
+    const Shield = (p) => <Icon {...p}>🛡️</Icon>;
+    const Plus = (p) => <Icon {...p}>➕</Icon>;
+    const Trash2 = (p) => <Icon {...p}>🗑️</Icon>;
+    const FileSpreadsheet = (p) => <Icon {...p}>📄</Icon>;
+    const ExternalLink = (p) => <Icon {...p}>🔗</Icon>;
+    const Edit2 = (p) => <Icon {...p}>✏️</Icon>;
+    const CheckCircle = (p) => <Icon {...p}>✅</Icon>;
+    const Search = (p) => <Icon {...p}>🔎</Icon>;
+    const Copy = (p) => <Icon {...p}>📋</Icon>;
+
+    const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
+    const Timestamp = firebase.firestore.Timestamp;
+
+    function collection(base, ...segments) {
+      if (segments.length % 2 === 1) {
+        let ref = base.collection(segments[0]);
+        for (let i = 1; i < segments.length; i += 2) {
+          ref = ref.doc(segments[i]).collection(segments[i + 1]);
+        }
+        return ref;
+      }
+      throw new Error("collection() path phải có số đoạn lẻ.");
+    }
+
+    function doc(base, ...segments) {
+      if (segments.length % 2 === 0) {
+        let ref = base.collection(segments[0]).doc(segments[1]);
+        for (let i = 2; i < segments.length; i += 2) {
+          ref = ref.collection(segments[i]).doc(segments[i + 1]);
+        }
+        return ref;
+      }
+      throw new Error("doc() path phải có số đoạn chẵn.");
+    }
+
+    const addDoc = (colRef, data) => colRef.add(data);
+    const updateDoc = (docRef, data) => docRef.update(data);
+    const deleteDoc = (docRef) => docRef.delete();
+    const setDoc = (docRef, data, options) => docRef.set(data, options);
+    const getDocs = (refOrQuery) => refOrQuery.get();
+    const onSnapshot = (refOrQuery, next, error) => refOrQuery.onSnapshot(next, error);
+    const orderBy = (field, direction) => ({ type: "orderBy", field, direction });
+    const query = (colRef, ...constraints) => {
+      return constraints.reduce((ref, c) => {
+        if (c.type === "orderBy") return ref.orderBy(c.field, c.direction);
+        return ref;
+      }, colRef);
+    };
+    const writeBatch = (database) => database.batch();
+
     const firebaseConfig = {
       apiKey: "AIzaSyCKsqJemCRXkCHYv8-pMo3mT97XeQDmFsA",
       authDomain: "nopbaitaphtd.firebaseapp.com",
@@ -92,9 +113,9 @@
       measurementId: "G-4F0TD9MS7F"
     };
 
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
-    const auth = getAuth(app);
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
 
     const ADMIN_PASSWORD = "admin123";
 
@@ -423,8 +444,8 @@
       const colSubmissions = () => collection(db, "courses", courseId, "submissions");
 
       useEffect(() => {
-        signInAnonymously(auth).catch(console.error);
-        const unsub = onAuthStateChanged(auth, setUser);
+        auth.signInAnonymously().catch(console.error);
+        const unsub = auth.onAuthStateChanged(setUser);
         return () => unsub();
       }, []);
 
