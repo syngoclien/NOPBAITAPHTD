@@ -6,13 +6,33 @@
   <title>Cổng Nộp Bài HTD</title>
 
   <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Hiện lỗi rõ trên màn hình thay vì trang trắng -->
+  <script>
+    window.addEventListener("error", (e) => {
+      document.body.innerHTML =
+        "<pre style='white-space:pre-wrap;padding:12px;color:#b91c1c;font-family:monospace'>" +
+        "JS Error:\\n" +
+        (e?.message || e) + "\\n" +
+        (e?.filename ? ("File: " + e.filename + "\\nLine: " + e.lineno) : "") +
+        (e?.error?.stack ? ("\\n\\n" + e.error.stack) : "") +
+        "</pre>";
+    });
+
+    window.addEventListener("unhandledrejection", (e) => {
+      document.body.innerHTML =
+        "<pre style='white-space:pre-wrap;padding:12px;color:#b91c1c;font-family:monospace'>" +
+        "Promise Error:\\n" +
+        (e?.reason?.stack || e?.reason?.message || e?.reason || e) +
+        "</pre>";
+    });
+  </script>
+
+  <!-- Babel chỉ dùng để biên dịch JSX, không dùng để import module -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-</head>
 
-<body class="bg-gray-100">
-  <div id="root"></div>
-
-  <script type="text/babel" data-type="module">
+  <!-- Nạp thư viện bằng ES module, sau đó đưa vào window.__deps cho Babel dùng -->
+  <script type="module">
     import React, { useState, useEffect, useMemo } from "https://esm.sh/react@18.2.0";
     import { createRoot } from "https://esm.sh/react-dom@18.2.0/client";
 
@@ -31,11 +51,42 @@
       ExternalLink, Edit2, CheckCircle, Search, Copy
     } from "https://esm.sh/lucide-react@0.344.0";
 
+    window.__deps = {
+      React, useState, useEffect, useMemo,
+      createRoot,
+      initializeApp,
+      getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
+      onSnapshot, query, orderBy, serverTimestamp, Timestamp, setDoc,
+      getDocs, writeBatch,
+      getAuth, signInAnonymously, onAuthStateChanged,
+      User, Shield, Plus, Trash2, FileSpreadsheet,
+      ExternalLink, Edit2, CheckCircle, Search, Copy
+    };
+
+    window.dispatchEvent(new Event("deps-ready"));
+  </script>
+</head>
+
+<body class="bg-gray-100">
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const {
+      React, useState, useEffect, useMemo,
+      createRoot,
+      initializeApp,
+      getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
+      onSnapshot, query, orderBy, serverTimestamp, Timestamp, setDoc,
+      getDocs, writeBatch,
+      getAuth, signInAnonymously, onAuthStateChanged,
+      User, Shield, Plus, Trash2, FileSpreadsheet,
+      ExternalLink, Edit2, CheckCircle, Search, Copy
+    } = window.__deps;
     const firebaseConfig = {
       apiKey: "AIzaSyCKsqJemCRXkCHYv8-pMo3mT97XeQDmFsA",
       authDomain: "nopbaitaphtd.firebaseapp.com",
       projectId: "nopbaitaphtd",
-      storageBucket: "nopbaitaphtd.firebasestorage.app",
+      storageBucket: "nopbaitaphtd.appspot.com",
       messagingSenderId: "249209694095",
       appId: "1:249209694095:web:e06a032c790303ba53cdfa",
       measurementId: "G-4F0TD9MS7F"
